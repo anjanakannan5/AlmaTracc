@@ -1,14 +1,26 @@
-
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
   FaArrowRight,
   FaBriefcase,
   FaLink,
   FaUsers,
+  FaGraduationCap,
 } from "react-icons/fa";
 import Navbar from "../components/Navbar";
 
 export default function Home() {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/stats")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.total) setStats(data);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="home-page">
       <Navbar />
@@ -31,6 +43,24 @@ export default function Home() {
               Keep your professional journey updated and stay
               connected with the people and department you know.
             </p>
+
+            {stats && (
+              <div style={{
+                display: "inline-flex",
+                gap: "16px",
+                padding: "8px 16px",
+                backgroundColor: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: "30px",
+                marginBottom: "20px",
+                fontSize: "0.85rem",
+                color: "#475569"
+              }}>
+                <span><strong>{stats.total.toLocaleString()}</strong> Alumni</span>
+                <span>•</span>
+                <span><strong>{stats.batches}</strong> Batches (2002–2023)</span>
+              </div>
+            )}
 
             <div className="hero-actions">
               <Link to="/login" className="button button-primary">
@@ -60,8 +90,8 @@ export default function Home() {
             <div className="art-card art-card-note">
               <FaUsers />
               <div>
-                <strong>One community</strong>
-                <span>Across generations</span>
+                <strong>{stats ? `${stats.total.toLocaleString()} Alumni` : "One community"}</strong>
+                <span>Across 21 batches</span>
               </div>
             </div>
 

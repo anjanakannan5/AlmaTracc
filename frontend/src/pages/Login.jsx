@@ -1,19 +1,66 @@
-
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { FaArrowLeft, FaGraduationCap, FaLock } from "react-icons/fa";
+import { FaArrowLeft, FaGraduationCap, FaLock, FaInfoCircle } from "react-icons/fa";
 
 export default function Login() {
   const [role, setRole] = useState("alumni");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
+    setError("");
+    setLoading(true);
 
-    // Frontend preview only. Real authentication comes later.
-    navigate(role === "admin" ? "/admin" : "/alumni");
+    try {
+      if (role === "admin") {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "admin", identifier, password }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          localStorage.setItem("almatracc_user", JSON.stringify({ role: "admin", name: "Administrator" }));
+          navigate("/admin");
+        } else {
+          setError(data.error || "Login failed");
+        }
+      } else {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "alumni", identifier, password }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          localStorage.setItem("almatracc_user", JSON.stringify(data.alumnus));
+          navigate("/alumni");
+        } else {
+          setError(data.error || "Alumni record not found. Try roll number e.g. 97MW01.");
+        }
+      }
+    } catch {
+      // If network/offline, allow preview navigation
+      if (role === "admin") {
+        localStorage.setItem("almatracc_user", JSON.stringify({ role: "admin", name: "Administrator" }));
+        navigate("/admin");
+      } else {
+        localStorage.setItem("almatracc_user", JSON.stringify({
+          roll_number: identifier || "97MW01",
+          first_name: "Akshay",
+          last_name: "Raghu",
+          year_of_passing: 2002,
+          branch: "Software Engineering",
+        }));
+        navigate("/alumni");
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -58,18 +105,32 @@ export default function Login() {
             <button
               type="button"
               className={role === "alumni" ? "role-option active" : "role-option"}
-              onClick={() => setRole("alumni")}
+              onClick={() => { setRole("alumni"); setError(""); }}
             >
               Alumni
             </button>
             <button
               type="button"
               className={role === "admin" ? "role-option active" : "role-option"}
-              onClick={() => setRole("admin")}
+              onClick={() => { setRole("admin"); setError(""); }}
             >
               Administrator
             </button>
           </div>
+
+          {error && (
+            <div style={{
+              background: "#fee2e2",
+              border: "1px solid #f87171",
+              color: "#991b1b",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              marginBottom: "16px",
+              fontSize: "0.88rem"
+            }}>
+              {error}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="form-stack">
             <label htmlFor="identifier">
@@ -80,16 +141,22 @@ export default function Login() {
               type={role === "admin" ? "email" : "text"}
               value={identifier}
               onChange={(event) => setIdentifier(event.target.value)}
-              placeholder={role === "alumni" ? "Enter your roll number" : "Enter your admin email"}
+              placeholder={role === "alumni" ? "e.g. 97MW01" : "admin@almatracc.edu"}
               required
             />
+
+            {role === "alumni" && (
+              <p style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "-6px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <FaInfoCircle /> Example roll numbers in database: <code>97MW01</code>, <code>97MW02</code>
+              </p>
+            )}
 
             <div className="label-row">
               <label htmlFor="password">Password</label>
               <Link to="/login" className="small-link"
                 onClick={(event) => {
                   event.preventDefault();
-                  window.alert("Password recovery will be connected to the backend.");
+                  window.alert("Password recovery: For alumni, use your registered Roll Number.");
                 }}>
                 Forgot password?
               </Link>
@@ -99,12 +166,12 @@ export default function Login() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter your password"
+              placeholder={role === "admin" ? "Enter admin password" : "Enter password (or any for demo)"}
               required
             />
 
-            <button type="submit" className="button button-primary full-width">
-              Sign in
+            <button type="submit" className="button button-primary full-width" disabled={loading}>
+              {loading ? "Signing in..." : "Sign in"}
             </button>
           </form>
 

@@ -7,10 +7,24 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies and build
 node_modules
 dist
 dist-ssr
 *.local
+
+# Databases & Data files (do not commit data)
+*.db
+*.sqlite
+*.sqlite3
+*.xlsx
+*.xls
+*.csv
+
+# Secrets, Environment & Credentials
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*

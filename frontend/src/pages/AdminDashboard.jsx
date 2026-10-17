@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
   FaBriefcase,
@@ -9,72 +9,104 @@ import {
   FaSignOutAlt,
   FaSlidersH,
   FaUsers,
+  FaDatabase,
+  FaLinkedin,
 } from "react-icons/fa";
 
-const demoAlumni = [
+const fallbackAlumni = [
   {
     id: 1,
-    roll: "AMCS-DEMO-01",
-    name: "Ananya Raman",
-    year: "2022",
-    company: "Example Technologies",
-    title: "Software Engineer",
-    city: "Coimbatore",
-  },
-  {
-    id: 2,
-    roll: "AMCS-DEMO-02",
-    name: "Rahul Kumar",
-    year: "2020",
-    company: "Example Systems",
-    title: "Data Analyst",
-    city: "Chennai",
-  },
-  {
-    id: 3,
-    roll: "AMCS-DEMO-03",
-    name: "Priya S",
-    year: "2018",
+    roll: "97MW01",
+    name: "Akshay Raghu",
+    year: "2002",
     company: "Not provided",
     title: "Not provided",
     city: "Not provided",
+    branch: "Software Engineering",
+    linkedin_status: "pending",
   },
   {
-    id: 4,
-    roll: "AMCS-DEMO-04",
-    name: "Arun Raj",
-    year: "2024",
-    company: "Example Technologies",
-    title: "Graduate Engineer",
-    city: "Bengaluru",
-  },
-  {
-    id: 5,
-    roll: "AMCS-DEMO-05",
-    name: "Meera Nair",
-    year: "2015",
-    company: "Example Consulting",
-    title: "Project Manager",
-    city: "Coimbatore",
+    id: 2,
+    roll: "97MW02",
+    name: "Anitha N",
+    year: "2002",
+    company: "Not provided",
+    title: "Not provided",
+    city: "Not provided",
+    branch: "Software Engineering",
+    linkedin_status: "missing",
   },
 ];
 
 export default function AdminDashboard() {
-  const [alumni] = useState(demoAlumni);
+  const [alumni, setAlumni] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState(null);
   const [search, setSearch] = useState("");
   const [year, setYear] = useState("all");
   const [company, setCompany] = useState("all");
   const [selectedAlumni, setSelectedAlumni] = useState(null);
+  const [dbConnected, setDbConnected] = useState(false);
 
-  const years = [...new Set(alumni.map((person) => person.year))].sort(
-    (a, b) => Number(b) - Number(a),
-  );
+  useEffect(() => {
+    async function loadData() {
+      try {
+        setLoading(true);
+        const [statsRes, alumniRes] = await Promise.all([
+          fetch("/api/stats"),
+          fetch("/api/alumni?limit=all"),
+        ]);
+
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          setStats(statsData);
+        }
+
+        if (alumniRes.ok) {
+          const rows = await alumniRes.json();
+          const mapped = rows.map((r) => ({
+            id: r.id,
+            roll: r.roll_number,
+            name: [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(" ") || r.roll_number,
+            year: String(r.year_of_passing || "Not specified"),
+            company: r.current_company || "Not provided",
+            title: r.current_role || "Not provided",
+            city: r.location || "Not provided",
+            branch: r.branch || "Software Engineering",
+            email: r.email || "Not provided",
+            phone: r.phone || "Not provided",
+            linkedin_url: r.linkedin_url,
+            linkedin_status: r.linkedin_status || "missing",
+          }));
+          setAlumni(mapped);
+          setDbConnected(true);
+        } else {
+          setAlumni(fallbackAlumni);
+        }
+      } catch (err) {
+        console.warn("Could not reach backend API, using fallback data:", err);
+        setAlumni(fallbackAlumni);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadData();
+  }, []);
+
+  const years = [
+    ...new Set(
+      alumni
+        .map((person) => person.year)
+        .filter((y) => y && y !== "Not specified")
+    ),
+  ].sort((a, b) => Number(b) - Number(a));
 
   const companies = [
     ...new Set(
       alumni
         .map((person) => person.company)
-        .filter((name) => name && name !== "Not provided"),
+        .filter((name) => name && name !== "Not provided")
     ),
   ].sort();
 
@@ -87,44 +119,52 @@ export default function AdminDashboard() {
       person.company,
       person.title,
       person.city,
+      person.branch,
     ].some((value) =>
       String(value ?? "")
         .toLowerCase()
-        .includes(query),
+        .includes(query)
     );
 
     const matchesYear = year === "all" || String(person.year) === year;
-
     const matchesCompany = company === "all" || person.company === company;
 
     return matchesSearch && matchesYear && matchesCompany;
   });
 
-  const registeredCount = 0;
-  const missingCompanyCount = alumni.filter(
-    (person) => person.company === "Not provided",
-  ).length;
+  const totalCount = stats ? stats.total : alumni.length;
+  const batchCount = stats ? stats.batches : years.length;
+  const missingCompanyCount = stats
+    ? stats.missingCompany
+    : alumni.filter((person) => person.company === "Not provided").length;
+  const registeredCount = stats ? stats.registered : 0;
 
   function exportCsv() {
     const headings = [
       "Roll number",
       "Name",
       "Graduation year",
+      "Branch",
       "Company",
       "Designation",
-      "City",
+      "Location",
+      "LinkedIn Status",
+      "LinkedIn URL",
     ];
 
     const rows = filteredAlumni.map((person) => [
       person.roll,
       person.name,
       person.year,
+      person.branch,
       person.company,
       person.title,
       person.city,
+      person.linkedin_status,
+      person.linkedin_url || "",
     ]);
 
-    const escapeCsv = (value) => `"${String(value).replace(/"/g, '""')}"`;
+    const escapeCsv = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
 
     const csv = [headings, ...rows]
       .map((row) => row.map(escapeCsv).join(","))
@@ -137,7 +177,7 @@ export default function AdminDashboard() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "almatracc-alumni-preview.csv";
+    link.download = `almatracc-alumni-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -173,10 +213,14 @@ export default function AdminDashboard() {
             <div className="avatar admin-avatar">A</div>
             <div>
               <strong>Administrator</strong>
-              <span>Admin portal preview</span>
+              <span>Admin portal</span>
             </div>
           </div>
-          <Link to="/" className="sidebar-link">
+          <Link
+            to="/"
+            className="sidebar-link"
+            onClick={() => localStorage.removeItem("almatracc_user")}
+          >
             <FaSignOutAlt /> Sign out
           </Link>
         </div>
@@ -191,7 +235,20 @@ export default function AdminDashboard() {
               Search and review alumni records across graduating years.
             </p>
           </div>
-          <span className="demo-label">DEMO DATA</span>
+          <span
+            className="demo-label"
+            style={{
+              backgroundColor: dbConnected ? "#ecfdf5" : "#fef3c7",
+              color: dbConnected ? "#047857" : "#b45309",
+              borderColor: dbConnected ? "#a7f3d0" : "#fde68a",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <FaDatabase />
+            {dbConnected ? `LIVE DB: ${totalCount} RECORDS` : "CONNECTING..."}
+          </span>
         </header>
 
         <section className="stats-grid">
@@ -199,17 +256,17 @@ export default function AdminDashboard() {
             <span className="stat-icon">
               <FaUsers />
             </span>
-            <span className="stat-label">Total records shown</span>
-            <strong>{alumni.length}</strong>
-            <small>Illustrative records</small>
+            <span className="stat-label">Total records</span>
+            <strong>{totalCount}</strong>
+            <small>Imported alumni records</small>
           </article>
           <article className="stat-card">
             <span className="stat-icon">
               <FaGraduationCap />
             </span>
             <span className="stat-label">Graduating batches</span>
-            <strong>{years.length}</strong>
-            <small>In this preview</small>
+            <strong>{batchCount}</strong>
+            <small>From 2002 to present</small>
           </article>
           <article className="stat-card">
             <span className="stat-icon">
@@ -217,15 +274,15 @@ export default function AdminDashboard() {
             </span>
             <span className="stat-label">Company not provided</span>
             <strong>{missingCompanyCount}</strong>
-            <small>Needs profile information</small>
+            <small>Pending career updates</small>
           </article>
           <article className="stat-card">
             <span className="stat-icon">
               <FaUsers />
             </span>
-            <span className="stat-label">Registered accounts</span>
+            <span className="stat-label">Registered / Active</span>
             <strong>{registeredCount}</strong>
-            <small>Awaiting backend integration</small>
+            <small>Self-updated profiles</small>
           </article>
         </section>
 
@@ -234,15 +291,16 @@ export default function AdminDashboard() {
             <div>
               <h2>All alumni</h2>
               <p className="muted">
-                Search by name, roll number, company, or designation.
+                Search by name, roll number, company, designation, or branch.
               </p>
             </div>
             <button
               type="button"
               className="button button-outline"
               onClick={exportCsv}
+              disabled={filteredAlumni.length === 0}
             >
-              <FaDownload /> Export filtered CSV
+              <FaDownload /> Export filtered CSV ({filteredAlumni.length})
             </button>
           </div>
 
@@ -264,10 +322,10 @@ export default function AdminDashboard() {
                 value={year}
                 onChange={(event) => setYear(event.target.value)}
               >
-                <option value="all">All graduating years</option>
+                <option value="all">All graduating years ({years.length})</option>
                 {years.map((value) => (
                   <option key={value} value={value}>
-                    {value}
+                    Class of {value}
                   </option>
                 ))}
               </select>
@@ -280,6 +338,7 @@ export default function AdminDashboard() {
               onChange={(event) => setCompany(event.target.value)}
             >
               <option value="all">All companies</option>
+              <option value="Not provided">Not provided</option>
               {companies.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -289,7 +348,11 @@ export default function AdminDashboard() {
           </div>
 
           <div className="table-meta">
-            <span>{filteredAlumni.length} records found</span>
+            <span>
+              {loading
+                ? "Loading records from database..."
+                : `${filteredAlumni.length} of ${alumni.length} records shown`}
+            </span>
             <button
               type="button"
               className="clear-filters"
@@ -312,11 +375,12 @@ export default function AdminDashboard() {
                   <th>Batch</th>
                   <th>Company</th>
                   <th>Location</th>
+                  <th>LinkedIn</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredAlumni.map((person) => (
+                {filteredAlumni.slice(0, 100).map((person) => (
                   <tr key={person.id}>
                     <td>
                       <div className="table-person">
@@ -329,10 +393,34 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                     </td>
-                    <td>{person.roll}</td>
+                    <td><code>{person.roll}</code></td>
                     <td>{person.year}</td>
                     <td>{person.company}</td>
                     <td>{person.city}</td>
+                    <td>
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          padding: "2px 8px",
+                          borderRadius: "12px",
+                          fontWeight: 500,
+                          backgroundColor:
+                            person.linkedin_status === "enriched"
+                              ? "#ecfdf5"
+                              : person.linkedin_status === "pending"
+                              ? "#eff6ff"
+                              : "#f1f5f9",
+                          color:
+                            person.linkedin_status === "enriched"
+                              ? "#047857"
+                              : person.linkedin_status === "pending"
+                              ? "#1d4ed8"
+                              : "#64748b",
+                        }}
+                      >
+                        {person.linkedin_status}
+                      </span>
+                    </td>
                     <td>
                       <button
                         type="button"
@@ -344,10 +432,17 @@ export default function AdminDashboard() {
                     </td>
                   </tr>
                 ))}
-                {filteredAlumni.length === 0 && (
+                {!loading && filteredAlumni.length === 0 && (
                   <tr>
-                    <td colSpan="6" className="empty-state">
+                    <td colSpan="7" className="empty-state">
                       No alumni match your search. Try changing your filters.
+                    </td>
+                  </tr>
+                )}
+                {loading && (
+                  <tr>
+                    <td colSpan="7" className="empty-state">
+                      Loading alumni database...
                     </td>
                   </tr>
                 )}
@@ -355,10 +450,11 @@ export default function AdminDashboard() {
             </table>
           </div>
 
-          <p className="table-footnote">
-            This preview uses sample data. Actual alumni records will be loaded
-            from the database after backend integration.
-          </p>
+          {filteredAlumni.length > 100 && (
+            <p className="table-footnote" style={{ textAlign: "center", marginTop: "12px" }}>
+              Showing top 100 of {filteredAlumni.length} matching alumni. Use the search bar above to narrow down specific names or companies.
+            </p>
+          )}
         </section>
 
         {selectedAlumni && (
@@ -393,13 +489,13 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <h3>{selectedAlumni.name}</h3>
-                  <p>Class of {selectedAlumni.year}</p>
+                  <p>Class of {selectedAlumni.year} · {selectedAlumni.branch}</p>
                 </div>
               </div>
               <dl className="detail-list">
                 <div>
                   <dt>Roll number</dt>
-                  <dd>{selectedAlumni.roll}</dd>
+                  <dd><code>{selectedAlumni.roll}</code></dd>
                 </div>
                 <div>
                   <dt>Designation</dt>
@@ -412,6 +508,27 @@ export default function AdminDashboard() {
                 <div>
                   <dt>Location</dt>
                   <dd>{selectedAlumni.city}</dd>
+                </div>
+                <div>
+                  <dt>Email</dt>
+                  <dd>{selectedAlumni.email}</dd>
+                </div>
+                <div>
+                  <dt>LinkedIn</dt>
+                  <dd>
+                    {selectedAlumni.linkedin_url ? (
+                      <a
+                        href={selectedAlumni.linkedin_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "#2563eb", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                      >
+                        <FaLinkedin /> Open profile
+                      </a>
+                    ) : (
+                      "Not provided"
+                    )}
+                  </dd>
                 </div>
               </dl>
               <button
