@@ -3,6 +3,9 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const { DatabaseSync } = require("node:sqlite");
+const { spawn } = require("child_process");
+
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 // Uses almatracc.db in backend folder (or root fallback)
 const DB_PATH =
@@ -401,6 +404,84 @@ app.post("/api/admin/reset-password", (req, res) => {
     console.error("Error resetting alumni password:", err);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// 9. Admin endpoint: Run LinkedIn enrichment (SSE streaming output)
+app.post("/api/admin/enrich", (req, res) => {
+  const { limit = 50, year } = req.body;
+
+  // Build args for the Python script
+  const scriptPath = path.join(__dirname, "enrich_linkedin.py");
+  const dbUrl = `sqlite:///${DB_PATH.replace(/\\/g, "/")}`;
+  const args = [scriptPath, dbUrl, "--limit", String(Number(limit) || 50)];
+
+  // SSE headers so the browser can stream log lines in real time
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const send = (type, text) => {
+    if (!res.destroyed && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ type, text })}\n\n`);
+    }
+  };
+
+  send("info", `🚀 Starting enrichment — limit: ${limit}${year ? `, batch: ${year}` : ""}`);
+
+  // If a specific year/batch is requested, we filter inside the script by
+  // wrapping it: select only alumni for that year then call enrichment.
+  // For simplicity we pass year as an env var the script can read, OR we just
+  // pre-filter the DB and store the IDs in a temp table. Easiest approach:
+  // patch the DB's linkedin_status for non-matching rows temporarily is risky,
+  // so instead we expose year as ENRICH_YEAR env and the script reads it.
+  // (We add that reading below via a wrapper approach)
+  const env = {
+    ...process.env,
+    ENRICH_YEAR: year ? String(year) : "",
+    PYTHONUNBUFFERED: "1",
+    PYTHONUTF8: "1",
+  };
+
+  const py = spawn("python", ["-u", ...args], { env, cwd: __dirname });
+
+  let stdoutBuffer = "";
+  let stderrBuffer = "";
+  const forwardLines = (type, chunk) => {
+    const isError = type === "err";
+    const buffer = (isError ? stderrBuffer : stdoutBuffer) + chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    const remainder = lines.pop();
+    if (isError) stderrBuffer = remainder;
+    else stdoutBuffer = remainder;
+    lines.filter(Boolean).forEach((line) => send(type, line));
+  };
+
+  py.stdout.on("data", (chunk) => forwardLines("log", chunk));
+  py.stderr.on("data", (chunk) => forwardLines("err", chunk));
+
+  py.on("error", (err) => {
+    send("err", `Failed to start Python: ${err.message}`);
+  });
+
+  py.on("close", (code, signal) => {
+    if (stdoutBuffer) send("log", stdoutBuffer);
+    if (stderrBuffer) send("err", stderrBuffer);
+
+    if (code === 0) {
+      send("done", "✅ Enrichment finished successfully (exit 0)");
+    } else {
+      const result = code === null ? `signal ${signal}` : `exit ${code}`;
+      send("err", `Enrichment failed (${result})`);
+    }
+    if (!res.destroyed) res.end();
+  });
+
+  res.on("close", () => {
+    if (!res.writableEnded && !py.killed) {
+      py.kill();
+    }
+  });
 });
 
 const PORT = process.env.PORT || 4000;

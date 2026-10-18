@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   FaBriefcase,
@@ -15,6 +15,8 @@ import {
   FaUndo,
   FaCheckCircle,
   FaExclamationCircle,
+  FaPlay,
+  FaStop,
 } from "react-icons/fa";
 
 const fallbackAlumni = [
@@ -55,6 +57,69 @@ export default function AdminDashboard() {
   const [resetStatus, setResetStatus] = useState({ type: "", message: "" });
   const [resetLoading, setResetLoading] = useState(false);
 
+  // Enrich state
+  const [enrichLimit, setEnrichLimit] = useState(50);
+  const [enrichBatch, setEnrichBatch] = useState("all");
+  const [enrichRunning, setEnrichRunning] = useState(false);
+  const [enrichLogs, setEnrichLogs] = useState([]);
+  const enrichAbortRef = useRef(null);
+  const enrichLogEndRef = useRef(null);
+
+  async function handleRunEnrich() {
+    if (enrichRunning) {
+      // Abort
+      if (enrichAbortRef.current) enrichAbortRef.current.abort();
+      return;
+    }
+    setEnrichLogs([]);
+    setEnrichRunning(true);
+    const controller = new AbortController();
+    enrichAbortRef.current = controller;
+
+    try {
+      const res = await fetch("/api/admin/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          limit: enrichLimit,
+          year: enrichBatch !== "all" ? enrichBatch : undefined,
+        }),
+        signal: controller.signal,
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // keep incomplete last chunk
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const msg = JSON.parse(line.slice(6));
+              setEnrichLogs((prev) => [...prev, msg]);
+              setTimeout(() => enrichLogEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+            } catch { /* ignore malformed */ }
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setEnrichLogs((prev) => [...prev, { type: "err", text: "Connection error: " + err.message }]);
+      } else {
+        setEnrichLogs((prev) => [...prev, { type: "info", text: "⛔ Aborted by admin." }]);
+      }
+    } finally {
+      setEnrichRunning(false);
+      enrichAbortRef.current = null;
+      await loadData();
+    }
+  }
+
   async function handleResetPassword(e) {
     if (e) e.preventDefault();
     const roll = resetRollNumber.trim().toUpperCase();
@@ -83,51 +148,51 @@ export default function AdminDashboard() {
     }
   }
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        const [statsRes, alumniRes] = await Promise.all([
-          fetch("/api/stats"),
-          fetch("/api/alumni?limit=all"),
-        ]);
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [statsRes, alumniRes] = await Promise.all([
+        fetch("/api/stats"),
+        fetch("/api/alumni?limit=all"),
+      ]);
 
-        if (statsRes.ok) {
-          const statsData = await statsRes.json();
-          setStats(statsData);
-        }
-
-        if (alumniRes.ok) {
-          const rows = await alumniRes.json();
-          const mapped = rows.map((r) => ({
-            id: r.id,
-            roll: r.roll_number,
-            name: [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(" ") || r.roll_number,
-            year: String(r.year_of_passing || "Not specified"),
-            company: r.current_company || "Not provided",
-            title: r.current_role || "Not provided",
-            city: r.location || "Not provided",
-            branch: r.branch || "Software Engineering",
-            email: r.email || "Not provided",
-            phone: r.phone || "Not provided",
-            linkedin_url: r.linkedin_url,
-            linkedin_status: r.linkedin_status || "missing",
-          }));
-          setAlumni(mapped);
-          setDbConnected(true);
-        } else {
-          setAlumni(fallbackAlumni);
-        }
-      } catch (err) {
-        console.warn("Could not reach backend API, using fallback data:", err);
-        setAlumni(fallbackAlumni);
-      } finally {
-        setLoading(false);
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setStats(statsData);
       }
-    }
 
-    loadData();
+      if (alumniRes.ok) {
+        const rows = await alumniRes.json();
+        const mapped = rows.map((r) => ({
+          id: r.id,
+          roll: r.roll_number,
+          name: [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(" ") || r.roll_number,
+          year: String(r.year_of_passing || "Not specified"),
+          company: r.current_company || "Not provided",
+          title: r.current_role || "Not provided",
+          city: r.location || "Not provided",
+          branch: r.branch || "Software Engineering",
+          email: r.email || "Not provided",
+          phone: r.phone || "Not provided",
+          linkedin_url: r.linkedin_url,
+          linkedin_status: r.linkedin_status || "missing",
+        }));
+        setAlumni(mapped);
+        setDbConnected(true);
+      } else {
+        setAlumni(fallbackAlumni);
+      }
+    } catch (err) {
+      console.warn("Could not reach backend API, using fallback data:", err);
+      setAlumni(fallbackAlumni);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const years = [
     ...new Set(
@@ -238,6 +303,9 @@ export default function AdminDashboard() {
           <a href="#directory" className="sidebar-link active">
             <FaUsers /> Alumni Directory
           </a>
+          <a href="#enrich-linkedin" className="sidebar-link">
+            <FaLinkedin /> Enrich LinkedIn
+          </a>
           <a href="#reset-password" className="sidebar-link">
             <FaKey /> Change Alumni Password
           </a>
@@ -319,6 +387,94 @@ export default function AdminDashboard() {
             <strong>{registeredCount}</strong>
             <small>Self-updated profiles</small>
           </article>
+        </section>
+
+        {/* ── LinkedIn Enrichment Panel ── */}
+        <section className="section-block" id="enrich-linkedin" style={{ marginBottom: "28px" }}>
+          <div className="section-title-row">
+            <div>
+              <h2>LinkedIn Enrichment</h2>
+              <p className="muted">
+                Run the enrichment script against alumni LinkedIn profiles to fetch current role, company &amp; location.
+              </p>
+            </div>
+          </div>
+
+          <div className="profile-card" style={{ maxWidth: "700px" }}>
+            {/* Controls row */}
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end", marginBottom: "18px" }}>
+              <div className="field" style={{ flex: "1 1 160px", marginBottom: 0 }}>
+                <label htmlFor="enrichBatch">Batch (graduating year)</label>
+                <select
+                  id="enrichBatch"
+                  value={enrichBatch}
+                  onChange={(e) => setEnrichBatch(e.target.value)}
+                  style={{ marginTop: "6px", width: "100%" }}
+                  disabled={enrichRunning}
+                >
+                  <option value="all">All batches</option>
+                  {years.map((y) => (
+                    <option key={y} value={y}>Class of {y}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field" style={{ flex: "1 1 120px", marginBottom: 0 }}>
+                <label htmlFor="enrichLimit">Limit (profiles)</label>
+                <input
+                  id="enrichLimit"
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={enrichLimit}
+                  onChange={(e) => setEnrichLimit(Math.max(1, Number(e.target.value)))}
+                  style={{ marginTop: "6px", width: "100%" }}
+                  disabled={enrichRunning}
+                />
+              </div>
+
+              <button
+                id="enrich-run-btn"
+                type="button"
+                className={enrichRunning ? "button button-outline" : "button button-primary"}
+                style={{ display: "inline-flex", alignItems: "center", gap: "8px", minWidth: "160px", alignSelf: "flex-end" }}
+                onClick={handleRunEnrich}
+              >
+                {enrichRunning ? <><FaStop /> Abort</> : <><FaPlay /> Run Enrichment</>}
+              </button>
+            </div>
+
+            <small className="field-hint" style={{ marginBottom: "14px", display: "block" }}>
+              Requires <code>ENRICH_API_KEY</code> env var set on the backend server.
+              Only processes alumni with a LinkedIn URL whose status is <em>pending</em>, <em>failed</em>, or <em>enriched</em> (older than 180 days).
+            </small>
+
+            {/* Live log output */}
+            {enrichLogs.length > 0 && (
+              <div style={{
+                background: "#0f172a",
+                borderRadius: "8px",
+                padding: "14px 16px",
+                maxHeight: "280px",
+                overflowY: "auto",
+                fontFamily: "monospace",
+                fontSize: "12.5px",
+                lineHeight: "1.7",
+              }}>
+                {enrichLogs.map((msg, i) => (
+                  <div key={i} style={{
+                    color: msg.type === "err" ? "#f87171"
+                         : msg.type === "done" ? "#34d399"
+                         : msg.type === "info" ? "#60a5fa"
+                         : "#e2e8f0",
+                  }}>
+                    {msg.text}
+                  </div>
+                ))}
+                <div ref={enrichLogEndRef} />
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="section-block" id="reset-password" style={{ marginBottom: "28px" }}>
