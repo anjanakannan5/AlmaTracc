@@ -363,6 +363,46 @@ app.post("/api/alumni/:rollNumber/change-password", (req, res) => {
   }
 });
 
+// 8. Admin endpoint: Reset alumni password back to their roll number
+app.post("/api/admin/reset-password", (req, res) => {
+  try {
+    const { rollNumber } = req.body;
+    const roll = (rollNumber || "").trim().toUpperCase();
+
+    if (!roll) {
+      return res.status(400).json({ success: false, error: "Roll number is required." });
+    }
+
+    const alumnus = db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
+    if (!alumnus) {
+      return res.status(404).json({
+        success: false,
+        error: `No alumni found with roll number '${rollNumber}'.`,
+      });
+    }
+
+    // Setting password to NULL clears custom password, reverting to roll_number default
+    db.prepare(`
+      UPDATE alumni
+      SET password = NULL,
+          updated_at = datetime('now')
+      WHERE UPPER(roll_number) = ?
+    `).run(roll);
+
+    const name = [alumnus.first_name, alumnus.middle_name, alumnus.last_name].filter(Boolean).join(" ") || alumnus.roll_number;
+
+    res.json({
+      success: true,
+      roll_number: alumnus.roll_number,
+      name,
+      message: `Password for ${name} (${alumnus.roll_number}) has been reset back to their roll number.`,
+    });
+  } catch (err) {
+    console.error("Error resetting alumni password:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`AlmaTracc API running on http://localhost:${PORT}`);

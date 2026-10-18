@@ -11,6 +11,10 @@ import {
   FaUsers,
   FaDatabase,
   FaLinkedin,
+  FaKey,
+  FaUndo,
+  FaCheckCircle,
+  FaExclamationCircle,
 } from "react-icons/fa";
 
 const fallbackAlumni = [
@@ -47,6 +51,37 @@ export default function AdminDashboard() {
   const [company, setCompany] = useState("all");
   const [selectedAlumni, setSelectedAlumni] = useState(null);
   const [dbConnected, setDbConnected] = useState(false);
+  const [resetRollNumber, setResetRollNumber] = useState("");
+  const [resetStatus, setResetStatus] = useState({ type: "", message: "" });
+  const [resetLoading, setResetLoading] = useState(false);
+
+  async function handleResetPassword(e) {
+    if (e) e.preventDefault();
+    const roll = resetRollNumber.trim().toUpperCase();
+    if (!roll) return;
+
+    setResetLoading(true);
+    setResetStatus({ type: "", message: "" });
+
+    try {
+      const res = await fetch("/api/admin/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rollNumber: roll }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setResetStatus({ type: "success", message: data.message });
+        setResetRollNumber("");
+      } else {
+        setResetStatus({ type: "error", message: data.error || "Failed to reset password." });
+      }
+    } catch {
+      setResetStatus({ type: "error", message: "Failed to connect to backend server." });
+    } finally {
+      setResetLoading(false);
+    }
+  }
 
   useEffect(() => {
     async function loadData() {
@@ -203,8 +238,8 @@ export default function AdminDashboard() {
           <a href="#directory" className="sidebar-link active">
             <FaUsers /> Alumni Directory
           </a>
-          <a href="#directory" className="sidebar-link">
-            <FaBriefcase /> Professional Records
+          <a href="#reset-password" className="sidebar-link">
+            <FaKey /> Change Alumni Password
           </a>
         </nav>
 
@@ -284,6 +319,65 @@ export default function AdminDashboard() {
             <strong>{registeredCount}</strong>
             <small>Self-updated profiles</small>
           </article>
+        </section>
+
+        <section className="section-block" id="reset-password" style={{ marginBottom: "28px" }}>
+          <div className="section-title-row">
+            <div>
+              <h2>Change Password for Alumni</h2>
+              <p className="muted">
+                Clear an alumnus's custom password and revert their login password back to their roll number.
+              </p>
+            </div>
+          </div>
+
+          <div className="profile-card" style={{ maxWidth: "640px" }}>
+            {resetStatus.message && (
+              <div style={{
+                padding: "12px 16px",
+                borderRadius: "6px",
+                marginBottom: "18px",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: resetStatus.type === "success" ? "#EAF0E9" : "#FDE8E8",
+                color: resetStatus.type === "success" ? "#426B52" : "#9B1C1C",
+                border: `1px solid ${resetStatus.type === "success" ? "#426B52" : "#F87171"}`
+              }}>
+                {resetStatus.type === "success" ? <FaCheckCircle /> : <FaExclamationCircle />}
+                <span>{resetStatus.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleResetPassword}>
+              <div className="field">
+                <label htmlFor="resetRollNumber">Alumnus Roll Number</label>
+                <div style={{ display: "flex", gap: "10px", marginTop: "6px" }}>
+                  <input
+                    id="resetRollNumber"
+                    type="text"
+                    value={resetRollNumber}
+                    onChange={(e) => setResetRollNumber(e.target.value.toUpperCase())}
+                    placeholder="e.g. 97MW01"
+                    style={{ flex: 1, textTransform: "uppercase" }}
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="button button-primary"
+                    disabled={resetLoading || !resetRollNumber.trim()}
+                    style={{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                  >
+                    <FaUndo /> {resetLoading ? "Resetting..." : "Reset to Roll Number"}
+                  </button>
+                </div>
+                <small className="field-hint" style={{ marginTop: "6px", display: "block" }}>
+                  Clears their custom password in the database. The user can immediately log in with their roll number.
+                </small>
+              </div>
+            </form>
+          </div>
         </section>
 
         <section className="directory-section" id="directory">
@@ -531,6 +625,32 @@ export default function AdminDashboard() {
                   </dd>
                 </div>
               </dl>
+              <button
+                type="button"
+                className="button button-outline full-width"
+                style={{ marginBottom: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+                onClick={async () => {
+                  if (window.confirm(`Reset password for ${selectedAlumni.name} (${selectedAlumni.roll}) back to their roll number?`)) {
+                    try {
+                      const res = await fetch("/api/admin/reset-password", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ rollNumber: selectedAlumni.roll }),
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        alert(data.message);
+                      } else {
+                        alert(data.error || "Failed to reset password.");
+                      }
+                    } catch {
+                      alert("Failed to connect to backend server.");
+                    }
+                  }
+                }}
+              >
+                <FaKey /> Reset Password to Roll Number
+              </button>
               <button
                 type="button"
                 className="button button-primary full-width"
