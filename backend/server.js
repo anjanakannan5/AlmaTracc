@@ -14,6 +14,17 @@ const DB_PATH =
 console.log(`Connecting to database at: ${DB_PATH}`);
 const db = new DatabaseSync(DB_PATH);
 
+// Ensure 'password' column exists in alumni table
+try {
+  const alumniCols = db.prepare("PRAGMA table_info(alumni)").all().map((c) => c.name);
+  if (!alumniCols.includes("password")) {
+    db.exec("ALTER TABLE alumni ADD COLUMN password TEXT");
+    console.log("Added 'password' column to alumni table");
+  }
+} catch (err) {
+  console.error("Migration check for password column:", err);
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -228,9 +239,16 @@ app.put("/api/alumni/:rollNumber", (req, res) => {
 // 6. Authentication endpoint
 app.post("/api/auth/login", (req, res) => {
   try {
-    const { role, identifier } = req.body;
+    const { role, identifier, password } = req.body;
 
     if (role === "admin") {
+      const adminPass = (password || "").trim();
+      if (!adminPass) {
+        return res.status(400).json({ success: false, error: "Admin password is required." });
+      }
+      if (adminPass !== "admin" && adminPass !== "admin123") {
+        return res.status(401).json({ success: false, error: "Invalid admin password. (Default is 'admin' or 'admin123')" });
+      }
       return res.json({
         success: true,
         role: "admin",
@@ -241,7 +259,11 @@ app.post("/api/auth/login", (req, res) => {
     // Alumni authentication: search by roll number or email
     const term = (identifier || "").trim().toUpperCase();
     if (!term) {
-      return res.status(400).json({ error: "Roll number or email is required." });
+      return res.status(400).json({ success: false, error: "Roll number or registered email is required." });
+    }
+
+    if (!password || !password.trim()) {
+      return res.status(400).json({ success: false, error: "Password is required." });
     }
 
     const alumnus = db.prepare(
@@ -250,18 +272,94 @@ app.post("/api/auth/login", (req, res) => {
 
     if (!alumnus) {
       return res.status(404).json({
-        error: `No alumni record found with '${identifier}'. Try e.g. 97MW01 or 97MW02.`,
+        success: false,
+        error: `No alumni record found with '${identifier}'. Check your roll number (e.g. 97MW01).`,
       });
     }
+
+    // Password validation:
+    // If alumnus has a custom saved password, check against it.
+    // Otherwise, default password is their roll_number (case-insensitive for convenience).
+    const enteredPassword = password.trim();
+    let isValidPassword = false;
+
+    if (alumnus.password && alumnus.password.trim() !== "") {
+      isValidPassword = (enteredPassword === alumnus.password.trim());
+    } else {
+      isValidPassword = (enteredPassword.toUpperCase() === alumnus.roll_number.trim().toUpperCase());
+    }
+
+    if (!isValidPassword) {
+      return res.status(401).json({
+        success: false,
+        error: "Incorrect password. Default password is your roll number (e.g. " + alumnus.roll_number + ").",
+      });
+    }
+
+    // Return alumnus details without password field
+    const { password: _, ...safeAlumnus } = alumnus;
 
     res.json({
       success: true,
       role: "alumni",
-      alumnus,
+      alumnus: safeAlumnus,
     });
   } catch (err) {
     console.error("Error in /api/auth/login:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. Change password endpoint for alumni
+app.post("/api/alumni/:rollNumber/change-password", (req, res) => {
+  try {
+    const roll = req.params.rollNumber.trim().toUpperCase();
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !currentPassword.trim()) {
+      return res.status(400).json({ success: false, error: "Current password is required." });
+    }
+
+    if (!newPassword || newPassword.trim().length < 4) {
+      return res.status(400).json({ success: false, error: "New password must be at least 4 characters long." });
+    }
+
+    const alumnus = db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
+    if (!alumnus) {
+      return res.status(404).json({ success: false, error: "Alumni record not found." });
+    }
+
+    // Verify current password
+    const enteredCurrent = currentPassword.trim();
+    let isCurrentValid = false;
+    if (alumnus.password && alumnus.password.trim() !== "") {
+      isCurrentValid = (enteredCurrent === alumnus.password.trim());
+    } else {
+      isCurrentValid = (enteredCurrent.toUpperCase() === alumnus.roll_number.trim().toUpperCase());
+    }
+
+    if (!isCurrentValid) {
+      return res.status(400).json({
+        success: false,
+        error: "Current password is incorrect. If you haven't changed it before, it is your roll number.",
+      });
+    }
+
+    // Update password in SQLite database
+    db.prepare(`
+      UPDATE alumni
+      SET password = ?,
+          updated_at = datetime('now')
+      WHERE UPPER(roll_number) = ?
+    `).run(newPassword.trim(), roll);
+
+    res.json({
+      success: true,
+      message: "Password changed successfully! You can now use your new password to sign in.",
+    });
+  } catch (err) {
+    console.error("Error changing password:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

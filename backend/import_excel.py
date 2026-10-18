@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS alumni (
   linkedin_url TEXT, linkedin_status TEXT DEFAULT 'missing',
   current_role TEXT, current_company TEXT, location TEXT,
   data_source TEXT, last_enriched_at TIMESTAMP,
+  password TEXT,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS alumni_career_history (

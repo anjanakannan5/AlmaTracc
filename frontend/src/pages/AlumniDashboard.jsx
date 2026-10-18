@@ -11,6 +11,8 @@ import {
   FaSignOutAlt,
   FaUser,
   FaDatabase,
+  FaKey,
+  FaLock,
 } from "react-icons/fa";
 
 const defaultProfile = {
@@ -35,6 +37,13 @@ export default function AlumniDashboard() {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState("");
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordStatus, setPasswordStatus] = useState({ type: "", message: "" });
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   useEffect(() => {
     async function loadProfile() {
@@ -125,6 +134,45 @@ export default function AlumniDashboard() {
     }
   }
 
+  async function handlePasswordChange(e) {
+    e.preventDefault();
+    setPasswordStatus({ type: "", message: "" });
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordStatus({ type: "error", message: "New passwords do not match." });
+      return;
+    }
+
+    if (passwordForm.newPassword.length < 4) {
+      setPasswordStatus({ type: "error", message: "New password must be at least 4 characters long." });
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      const res = await fetch(`/api/alumni/${profile.rollNumber}/change-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPasswordStatus({ type: "success", message: data.message });
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      } else {
+        setPasswordStatus({ type: "error", message: data.error || "Failed to update password." });
+      }
+    } catch {
+      setPasswordStatus({ type: "error", message: "Unable to connect to server. Please try again later." });
+    } finally {
+      setPasswordLoading(false);
+    }
+  }
+
   const fullName = [profile.firstName, profile.lastName, profile.initial]
     .filter(Boolean)
     .join(" ") || profile.rollNumber;
@@ -150,6 +198,9 @@ export default function AlumniDashboard() {
           </a>
           <a href="#professional" className="sidebar-link">
             <FaBriefcase /> Professional Details
+          </a>
+          <a href="#security" className="sidebar-link">
+            <FaKey /> Change Password
           </a>
         </nav>
 
@@ -375,6 +426,91 @@ export default function AlumniDashboard() {
                   </button>
                 </div>
               )}
+            </form>
+          </div>
+        </section>
+
+        <section className="section-block" id="security">
+          <div className="section-title-row">
+            <div>
+              <h2>Account Security & Password</h2>
+              <p className="muted">
+                Your initial password is your roll number (<code>{profile.rollNumber}</code>). You can change it below anytime.
+              </p>
+            </div>
+          </div>
+
+          <div className="profile-card">
+            {passwordStatus.message && (
+              <div style={{
+                padding: "12px 16px",
+                borderRadius: "6px",
+                marginBottom: "18px",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: passwordStatus.type === "success" ? "#EAF0E9" : "#FDE8E8",
+                color: passwordStatus.type === "success" ? "#426B52" : "#9B1C1C",
+                border: `1px solid ${passwordStatus.type === "success" ? "#426B52" : "#F87171"}`
+              }}>
+                {passwordStatus.type === "success" ? <FaCheckCircle /> : <FaLock />}
+                <span>{passwordStatus.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handlePasswordChange}>
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="currentPassword">Current password</label>
+                  <input
+                    id="currentPassword"
+                    name="currentPassword"
+                    type="password"
+                    value={passwordForm.currentPassword}
+                    onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                    placeholder="Current password (or roll number if default)"
+                    required
+                  />
+                  <small className="field-hint">If this is your first time, enter your Roll Number.</small>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="newPassword">New password</label>
+                  <input
+                    id="newPassword"
+                    name="newPassword"
+                    type="password"
+                    value={passwordForm.newPassword}
+                    onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                    placeholder="Enter new password (min. 4 characters)"
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="confirmPassword">Confirm new password</label>
+                  <input
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    type="password"
+                    value={passwordForm.confirmPassword}
+                    onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                    placeholder="Re-enter new password"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-actions" style={{ marginTop: "20px" }}>
+                <button
+                  type="submit"
+                  className="button button-primary"
+                  disabled={passwordLoading}
+                >
+                  {passwordLoading ? "Updating password..." : "Update Password"}
+                </button>
+              </div>
             </form>
           </div>
         </section>

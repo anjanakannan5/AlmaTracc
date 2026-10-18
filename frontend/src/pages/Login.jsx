@@ -23,11 +23,11 @@ export default function Login() {
           body: JSON.stringify({ role: "admin", identifier, password }),
         });
         const data = await res.json();
-        if (data.success) {
+        if (res.ok && data.success) {
           localStorage.setItem("almatracc_user", JSON.stringify({ role: "admin", name: "Administrator" }));
           navigate("/admin");
         } else {
-          setError(data.error || "Login failed");
+          setError(data.error || "Login failed. Please check your credentials.");
         }
       } else {
         const res = await fetch("/api/auth/login", {
@@ -40,24 +40,11 @@ export default function Login() {
           localStorage.setItem("almatracc_user", JSON.stringify(data.alumnus));
           navigate("/alumni");
         } else {
-          setError(data.error || "Alumni record not found. Try roll number e.g. 97MW01.");
+          setError(data.error || "Login failed. Default password is your roll number (e.g. 97MW01).");
         }
       }
     } catch {
-      // If network/offline, allow preview navigation
-      if (role === "admin") {
-        localStorage.setItem("almatracc_user", JSON.stringify({ role: "admin", name: "Administrator" }));
-        navigate("/admin");
-      } else {
-        localStorage.setItem("almatracc_user", JSON.stringify({
-          roll_number: identifier || "97MW01",
-          first_name: "Akshay",
-          last_name: "Raghu",
-          year_of_passing: 2002,
-          branch: "Software Engineering",
-        }));
-        navigate("/alumni");
-      }
+      setError("Unable to connect to authentication server. Please ensure the backend is running on http://localhost:4000.");
     } finally {
       setLoading(false);
     }
@@ -134,20 +121,20 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="form-stack">
             <label htmlFor="identifier">
-              {role === "alumni" ? "Roll number or email" : "Admin email"}
+              {role === "alumni" ? "Roll number or email" : "Admin email / username"}
             </label>
             <input
               id="identifier"
-              type={role === "admin" ? "email" : "text"}
+              type={role === "admin" ? "text" : "text"}
               value={identifier}
               onChange={(event) => setIdentifier(event.target.value)}
-              placeholder={role === "alumni" ? "e.g. 97MW01" : "admin@almatracc.edu"}
+              placeholder={role === "alumni" ? "e.g. 97MW01" : "admin"}
               required
             />
 
             {role === "alumni" && (
               <p style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "-6px", display: "flex", alignItems: "center", gap: "6px" }}>
-                <FaInfoCircle /> Example roll numbers in database: <code>97MW01</code>, <code>97MW02</code>
+                <FaInfoCircle /> Example roll numbers: <code>97MW01</code>, <code>97MW02</code>
               </p>
             )}
 
@@ -156,7 +143,7 @@ export default function Login() {
               <Link to="/login" className="small-link"
                 onClick={(event) => {
                   event.preventDefault();
-                  window.alert("Password recovery: For alumni, use your registered Roll Number.");
+                  window.alert("Password Info: Your default password is your Roll Number (e.g. 97MW01). If you have changed it and forgot it, please contact the administrator.");
                 }}>
                 Forgot password?
               </Link>
@@ -166,9 +153,14 @@ export default function Login() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder={role === "admin" ? "Enter admin password" : "Enter password (or any for demo)"}
+              placeholder={role === "admin" ? "Enter admin password (e.g. admin)" : "Default password is your roll number"}
               required
             />
+            {role === "alumni" && (
+              <small style={{ color: "#64748b", marginTop: "-6px", marginBottom: "8px", display: "block", fontSize: "0.8rem" }}>
+                🔑 Default password: Your <strong>Roll Number</strong> (e.g. <code>97MW01</code>). You can change it after logging in.
+              </small>
+            )}
 
             <button type="submit" className="button button-primary full-width" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
