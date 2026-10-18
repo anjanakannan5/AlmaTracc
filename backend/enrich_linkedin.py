@@ -32,10 +32,12 @@ def build_location(d):
     return ", ".join(p for p in parts if p) or None
 
 ap = argparse.ArgumentParser()
-ap.add_argument("db", nargs="?", default="sqlite:///almatracc.db")
+ap.add_argument("db", nargs="?", default=os.environ.get("DATABASE_URL"))
 ap.add_argument("--limit", type=int, default=50)
 ap.add_argument("--refresh-days", type=int, default=180)
 args = ap.parse_args()
+if not args.db:
+    ap.error("Set DATABASE_URL or pass a database URL.")
 engine = create_engine(args.db)
 
 # ---- Provider adapter: the ONLY part you change when switching vendors ----------
@@ -112,7 +114,7 @@ for alumni_id, roll_number, url in todo:
             {"i": alumni_id, "r": p["role"], "c": p["company"], "l": p["location"],
              "raw": json.dumps(p["raw"])})
         c.execute(text("""UPDATE alumni SET
-              current_role=:r, current_company=:c, location=:l,
+              "current_role"=:r, current_company=:c, location=:l,
               linkedin_status='enriched', last_enriched_at=:t, updated_at=:t,
               data_source='linkedin_api'
             WHERE id=:i AND COALESCE(data_source,'') NOT IN ('self_edit','event_checkin')"""),

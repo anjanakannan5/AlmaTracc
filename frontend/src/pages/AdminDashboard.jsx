@@ -6,7 +6,6 @@ import {
   FaGraduationCap,
   FaHome,
   FaSearch,
-  FaSignOutAlt,
   FaSlidersH,
   FaUsers,
   FaDatabase,
@@ -18,35 +17,13 @@ import {
   FaPlay,
   FaStop,
 } from "react-icons/fa";
-
-const fallbackAlumni = [
-  {
-    id: 1,
-    roll: "97MW01",
-    name: "Akshay Raghu",
-    year: "2002",
-    company: "Not provided",
-    title: "Not provided",
-    city: "Not provided",
-    branch: "Software Engineering",
-    linkedin_status: "pending",
-  },
-  {
-    id: 2,
-    roll: "97MW02",
-    name: "Anitha N",
-    year: "2002",
-    company: "Not provided",
-    title: "Not provided",
-    city: "Not provided",
-    branch: "Software Engineering",
-    linkedin_status: "missing",
-  },
-];
+import { apiFetch } from "../api";
+import LogoutButton from "../components/LogoutButton";
 
 export default function AdminDashboard() {
   const [alumni, setAlumni] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [stats, setStats] = useState(null);
   const [search, setSearch] = useState("");
   const [year, setYear] = useState("all");
@@ -77,7 +54,7 @@ export default function AdminDashboard() {
     enrichAbortRef.current = controller;
 
     try {
-      const res = await fetch("/api/admin/enrich", {
+      const res = await apiFetch("/api/admin/enrich", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -129,7 +106,7 @@ export default function AdminDashboard() {
     setResetStatus({ type: "", message: "" });
 
     try {
-      const res = await fetch("/api/admin/reset-password", {
+      const res = await apiFetch("/api/admin/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rollNumber: roll }),
@@ -152,39 +129,38 @@ export default function AdminDashboard() {
     try {
       setLoading(true);
       const [statsRes, alumniRes] = await Promise.all([
-        fetch("/api/stats"),
-        fetch("/api/alumni?limit=all"),
+        apiFetch("/api/stats"),
+        apiFetch("/api/alumni?limit=all"),
       ]);
 
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
+      if (!statsRes.ok) throw new Error("Could not load cloud statistics.");
+      if (!alumniRes.ok) throw new Error("Could not load the alumni directory from the cloud.");
+      const statsData = await statsRes.json();
+      setStats(statsData);
 
-      if (alumniRes.ok) {
-        const rows = await alumniRes.json();
-        const mapped = rows.map((r) => ({
-          id: r.id,
-          roll: r.roll_number,
-          name: [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(" ") || r.roll_number,
-          year: String(r.year_of_passing || "Not specified"),
-          company: r.current_company || "Not provided",
-          title: r.current_role || "Not provided",
-          city: r.location || "Not provided",
-          branch: r.branch || "Software Engineering",
-          email: r.email || "Not provided",
-          phone: r.phone || "Not provided",
-          linkedin_url: r.linkedin_url,
-          linkedin_status: r.linkedin_status || "missing",
-        }));
-        setAlumni(mapped);
-        setDbConnected(true);
-      } else {
-        setAlumni(fallbackAlumni);
-      }
+      const rows = await alumniRes.json();
+      const mapped = rows.map((r) => ({
+        id: r.id,
+        roll: r.roll_number,
+        name: [r.first_name, r.middle_name, r.last_name].filter(Boolean).join(" ") || r.roll_number,
+        year: String(r.year_of_passing || "Not specified"),
+        company: r.current_company || "Not provided",
+        title: r.current_role || "Not provided",
+        city: r.location || "Not provided",
+        branch: r.branch || "Software Engineering",
+        email: r.email || "Not provided",
+        phone: r.phone || "Not provided",
+        linkedin_url: r.linkedin_url,
+        linkedin_status: r.linkedin_status || "missing",
+      }));
+      setAlumni(mapped);
+      setDbConnected(true);
+      setLoadError("");
     } catch (err) {
-      console.warn("Could not reach backend API, using fallback data:", err);
-      setAlumni(fallbackAlumni);
+      console.error("Could not load cloud data:", err);
+      setAlumni([]);
+      setDbConnected(false);
+      setLoadError(err.message || "Could not load data from the cloud.");
     } finally {
       setLoading(false);
     }
@@ -319,13 +295,7 @@ export default function AdminDashboard() {
               <span>Admin portal</span>
             </div>
           </div>
-          <Link
-            to="/"
-            className="sidebar-link"
-            onClick={() => localStorage.removeItem("almatracc_user")}
-          >
-            <FaSignOutAlt /> Sign out
-          </Link>
+          <LogoutButton />
         </div>
       </aside>
 
@@ -354,6 +324,7 @@ export default function AdminDashboard() {
           </span>
         </header>
 
+        {loadError && <div className="error-message" role="alert">{loadError}</div>}
         <section className="stats-grid">
           <article className="stat-card">
             <span className="stat-icon">
@@ -788,7 +759,7 @@ export default function AdminDashboard() {
                 onClick={async () => {
                   if (window.confirm(`Reset password for ${selectedAlumni.name} (${selectedAlumni.roll}) back to their roll number?`)) {
                     try {
-                      const res = await fetch("/api/admin/reset-password", {
+                      const res = await apiFetch("/api/admin/reset-password", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ rollNumber: selectedAlumni.roll }),

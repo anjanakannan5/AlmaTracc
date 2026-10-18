@@ -8,35 +8,38 @@ import {
   FaGraduationCap,
   FaHome,
   FaLinkedin,
-  FaSignOutAlt,
   FaUser,
   FaDatabase,
   FaKey,
   FaLock,
 } from "react-icons/fa";
+import { apiFetch } from "../api";
+import LogoutButton from "../components/LogoutButton";
 
 const defaultProfile = {
-  firstName: "Akshay",
-  lastName: "Raghu",
+  firstName: "",
+  lastName: "",
   initial: "",
-  rollNumber: "97MW01",
-  graduationYear: "2002",
-  branch: "Software Engineering",
+  rollNumber: "",
+  graduationYear: "",
+  branch: "",
   jobTitle: "",
   company: "",
   city: "",
-  country: "India",
-  linkedin: "https://www.linkedin.com/in/akshay-raghu-pmp-7b155a4",
+  country: "",
+  linkedin: "",
   email: "",
   phone: "",
 };
 
-export default function AlumniDashboard() {
+export default function AlumniDashboard({ user }) {
   const [profile, setProfile] = useState(defaultProfile);
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
     newPassword: "",
@@ -47,47 +50,36 @@ export default function AlumniDashboard() {
 
   useEffect(() => {
     async function loadProfile() {
-      let roll = "97MW01";
-      try {
-        const stored = localStorage.getItem("almatracc_user");
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed.roll_number) roll = parsed.roll_number;
-        }
-      } catch (e) {
-        console.error(e);
-      }
-
       try {
         setLoading(true);
-        const res = await fetch(`/api/alumni/${roll}`);
-        if (res.ok) {
-          const data = await res.json();
-          setProfile({
-            firstName: data.first_name || "",
-            lastName: data.last_name || "",
-            initial: data.middle_name || "",
-            rollNumber: data.roll_number || roll,
-            graduationYear: String(data.year_of_passing || "2002"),
-            branch: data.branch || "Software Engineering",
-            jobTitle: data.current_role || "",
-            company: data.current_company || "",
-            city: data.location || "",
-            country: "India",
-            linkedin: data.linkedin_url || "",
-            email: data.email || "",
-            phone: data.phone || "",
-          });
-        }
+        const res = await apiFetch(`/api/alumni/${encodeURIComponent(user.roll_number)}`);
+        if (!res.ok) throw new Error("Could not load your profile from the cloud.");
+        const data = await res.json();
+        setProfile({
+          firstName: data.first_name || "",
+          lastName: data.last_name || "",
+          initial: data.middle_name || "",
+          rollNumber: data.roll_number,
+          graduationYear: String(data.year_of_passing || ""),
+          branch: data.branch || "",
+          jobTitle: data.current_role || "",
+          company: data.current_company || "",
+          city: data.location || "",
+          country: "",
+          linkedin: data.linkedin_url || "",
+          email: data.email || "",
+          phone: data.phone || "",
+        });
+        setProfileError("");
       } catch (err) {
-        console.warn("Could not load alumnus profile from server:", err);
+        setProfileError(err.message);
       } finally {
         setLoading(false);
       }
     }
 
     loadProfile();
-  }, []);
+  }, [user.roll_number]);
 
   function updateField(event) {
     setProfile({
@@ -100,9 +92,10 @@ export default function AlumniDashboard() {
   async function handleSave(event) {
     event.preventDefault();
     setSaveStatus("Saving changes...");
+    setSaveError("");
 
     try {
-      const res = await fetch(`/api/alumni/${profile.rollNumber}`, {
+      const res = await apiFetch(`/api/alumni/${encodeURIComponent(profile.rollNumber)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -117,20 +110,17 @@ export default function AlumniDashboard() {
         }),
       });
 
-      if (res.ok) {
+      if (!res.ok) {
         const data = await res.json();
-        setSaved(true);
-        setEditing(false);
-        setSaveStatus("Profile successfully updated in database!");
-      } else {
-        setSaved(true);
-        setEditing(false);
-        setSaveStatus("Updated profile locally.");
+        throw new Error(data.error || "Could not save your profile to the cloud.");
       }
-    } catch {
+      await res.json();
       setSaved(true);
       setEditing(false);
-      setSaveStatus("Updated profile locally (offline mode).");
+      setSaveStatus("Profile successfully updated in the cloud database!");
+    } catch (err) {
+      setSaved(false);
+      setSaveError(err.message || "Could not save your profile to the cloud.");
     }
   }
 
@@ -150,7 +140,7 @@ export default function AlumniDashboard() {
 
     setPasswordLoading(true);
     try {
-      const res = await fetch(`/api/alumni/${profile.rollNumber}/change-password`, {
+      const res = await apiFetch(`/api/alumni/${encodeURIComponent(profile.rollNumber)}/change-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -214,13 +204,7 @@ export default function AlumniDashboard() {
               <span>Alumni member · {profile.rollNumber}</span>
             </div>
           </div>
-          <Link
-            to="/"
-            className="sidebar-link"
-            onClick={() => localStorage.removeItem("almatracc_user")}
-          >
-            <FaSignOutAlt /> Sign out
-          </Link>
+          <LogoutButton />
         </div>
       </aside>
 
@@ -235,6 +219,9 @@ export default function AlumniDashboard() {
           </span>
         </header>
 
+        {profileError && <div className="error-message" role="alert">{profileError}</div>}
+        {saveError && <div className="error-message" role="alert">{saveError}</div>}
+        {loading && <p className="muted">Loading your profile from the cloud...</p>}
         <section className="welcome-panel">
           <div>
             <span className="eyebrow light-eyebrow">WELCOME TO ALMATRACC</span>

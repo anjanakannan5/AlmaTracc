@@ -1,71 +1,152 @@
 const express = require("express");
 const cors = require("cors");
+const session = require("express-session");
+const PgSession = require("connect-pg-simple")(session);
 const path = require("path");
-const fs = require("fs");
-const { DatabaseSync } = require("node:sqlite");
 const { spawn } = require("child_process");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-// Uses almatracc.db in backend folder (or root fallback)
-const DB_PATH =
-  process.env.DB_PATH ||
-  (fs.existsSync(path.join(__dirname, "almatracc.db"))
-    ? path.join(__dirname, "almatracc.db")
-    : path.join(__dirname, "..", "almatracc.db"));
-
-console.log(`Connecting to database at: ${DB_PATH}`);
-const db = new DatabaseSync(DB_PATH);
-
-// Ensure 'password' column exists in alumni table
-try {
-  const alumniCols = db.prepare("PRAGMA table_info(alumni)").all().map((c) => c.name);
-  if (!alumniCols.includes("password")) {
-    db.exec("ALTER TABLE alumni ADD COLUMN password TEXT");
-    console.log("Added 'password' column to alumni table");
-  }
-} catch (err) {
-  console.error("Migration check for password column:", err);
-}
+const { db, pool, initializeDatabase, verifyPassword } = require("./database");
 
 const app = express();
-app.use(cors());
+const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+const sessionSecret = process.env.SESSION_SECRET;
+const sameSite = process.env.SESSION_COOKIE_SAME_SITE || "lax";
+
+function isAllowedOrigin(origin) {
+  if (!origin || origin === frontendOrigin) return true;
+  if (process.env.NODE_ENV === "production") return false;
+
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:"
+      && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+if (process.env.NODE_ENV === "production"
+  && (!sessionSecret || !process.env.FRONTEND_ORIGIN || !process.env.ADMIN_PASSWORD)) {
+  throw new Error("SESSION_SECRET, FRONTEND_ORIGIN, and ADMIN_PASSWORD must be configured in production.");
+}
+if (!["lax", "none", "strict"].includes(sameSite)) {
+  throw new Error("SESSION_COOKIE_SAME_SITE must be lax, none, or strict.");
+}
+if (sameSite === "none" && process.env.NODE_ENV !== "production") {
+  throw new Error("SameSite=None session cookies require production HTTPS.");
+}
+
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+const sessionCookie = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite,
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: "/",
+};
+
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, isAllowedOrigin(origin));
+  },
+  credentials: true,
+}));
 app.use(express.json());
+app.use((req, res, next) => {
+  if (!isAllowedOrigin(req.get("origin"))) {
+    return res.status(403).json({ error: "Request origin is not allowed." });
+  }
+  next();
+});
+app.use(session({
+  name: "almatracc.sid",
+  secret: sessionSecret || "development-only-session-secret",
+  store: new PgSession({
+    pool,
+    tableName: "user_sessions",
+    createTableIfMissing: true,
+  }),
+  resave: false,
+  saveUninitialized: false,
+  cookie: sessionCookie,
+}));
+
+function requireAuth(req, res, next) {
+  if (!req.session.user) {
+    return res.status(401).json({ error: "Please sign in to continue." });
+  }
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (req.session.user?.role !== "admin") {
+    return res.status(req.session.user ? 403 : 401).json({ error: "Administrator access is required." });
+  }
+  next();
+}
+
+function requireAlumnus(req, res, next) {
+  if (req.session.user?.role !== "alumni") {
+    return res.status(req.session.user ? 403 : 401).json({ error: "Alumni access is required." });
+  }
+  if (req.params.rollNumber
+    && req.session.user.roll_number.toUpperCase() !== req.params.rollNumber.trim().toUpperCase()) {
+    return res.status(403).json({ error: "You can only access your own alumni account." });
+  }
+  next();
+}
+
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => (err ? reject(err) : resolve()));
+  });
+}
+
+function saveSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.save((err) => (err ? reject(err) : resolve()));
+  });
+}
 
 // 1. Health check
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
   try {
-    const { total } = db.prepare("SELECT COUNT(*) AS total FROM alumni").get();
-    res.json({ status: "ok", alumni: total, database: DB_PATH });
+    const { total } = await db.prepare("SELECT COUNT(*)::int AS total FROM alumni").get();
+    res.json({ status: "ok", alumni: total, database: "postgres" });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
 
 // 2. High-level dashboard statistics
-app.get("/api/stats", (req, res) => {
+app.get("/api/stats", async (req, res) => {
   try {
-    const { total } = db.prepare("SELECT COUNT(*) AS total FROM alumni").get() || { total: 0 };
-    const { batches } = db.prepare(
-      "SELECT COUNT(DISTINCT year_of_passing) AS batches FROM alumni WHERE year_of_passing IS NOT NULL"
-    ).get() || { batches: 0 };
-    const { withCompany } = db.prepare(
-      "SELECT COUNT(*) AS withCompany FROM alumni WHERE current_company IS NOT NULL AND TRIM(current_company) != '' AND current_company != 'Not provided'"
-    ).get() || { withCompany: 0 };
-    const { registered } = db.prepare(
-      "SELECT COUNT(*) AS registered FROM alumni WHERE (email IS NOT NULL AND TRIM(email) != '') OR data_source = 'self_edit'"
-    ).get() || { registered: 0 };
+    const { total } = await db.prepare("SELECT COUNT(*)::int AS total FROM alumni").get();
+    const { batches } = await db.prepare(
+      "SELECT COUNT(DISTINCT year_of_passing)::int AS batches FROM alumni WHERE year_of_passing IS NOT NULL"
+    ).get();
+    const { withCompany } = await db.prepare(
+      `SELECT COUNT(*)::int AS "withCompany" FROM alumni WHERE current_company IS NOT NULL AND TRIM(current_company) != '' AND current_company != 'Not provided'`
+    ).get();
+    const { registered } = await db.prepare(
+      "SELECT COUNT(*)::int AS registered FROM alumni WHERE (email IS NOT NULL AND TRIM(email) != '') OR data_source = 'self_edit'"
+    ).get();
 
-    const statusBreakdown = db.prepare(
-      "SELECT linkedin_status AS status, COUNT(*) AS count FROM alumni GROUP BY linkedin_status"
+    const statusBreakdown = await db.prepare(
+      'SELECT linkedin_status AS status, COUNT(*)::int AS "count" FROM alumni GROUP BY linkedin_status'
     ).all();
 
-    const yearRows = db.prepare(
+    const yearRows = await db.prepare(
       "SELECT DISTINCT year_of_passing FROM alumni WHERE year_of_passing IS NOT NULL ORDER BY year_of_passing DESC"
     ).all();
     const years = yearRows.map((r) => String(r.year_of_passing));
 
-    const companyRows = db.prepare(
+    const companyRows = await db.prepare(
       "SELECT DISTINCT current_company FROM alumni WHERE current_company IS NOT NULL AND TRIM(current_company) != '' ORDER BY current_company"
     ).all();
     const companies = companyRows.map((r) => r.current_company);
@@ -87,7 +168,7 @@ app.get("/api/stats", (req, res) => {
 });
 
 // 3. List / search alumni with filters
-app.get("/api/alumni", (req, res) => {
+app.get("/api/alumni", requireAdmin, async (req, res) => {
   try {
     const { q = "", year, company, status, limit = 100, offset = 0 } = req.query;
     const queryTerm = q.trim();
@@ -95,7 +176,7 @@ app.get("/api/alumni", (req, res) => {
     let sql = `
       SELECT id, roll_number, first_name, middle_name, last_name, gender,
              year_of_joining, year_of_passing, branch, email, phone,
-             linkedin_url, linkedin_status, current_role, current_company,
+             linkedin_url, linkedin_status, "current_role", current_company,
              location, data_source, last_enriched_at, updated_at
       FROM alumni
       WHERE 1=1
@@ -105,13 +186,13 @@ app.get("/api/alumni", (req, res) => {
     if (queryTerm) {
       const like = `%${queryTerm}%`;
       sql += ` AND (
-        first_name LIKE ? OR
-        middle_name LIKE ? OR
-        last_name LIKE ? OR
-        roll_number LIKE ? OR
-        current_company LIKE ? OR
-        current_role LIKE ? OR
-        location LIKE ?
+        first_name ILIKE ? OR
+        middle_name ILIKE ? OR
+        last_name ILIKE ? OR
+        roll_number ILIKE ? OR
+        current_company ILIKE ? OR
+        "current_role" ILIKE ? OR
+        location ILIKE ?
       )`;
       params.push(like, like, like, like, like, like, like);
     }
@@ -141,7 +222,7 @@ app.get("/api/alumni", (req, res) => {
     sql += " LIMIT ? OFFSET ?";
     params.push(parsedLimit, Math.max(Number(offset) || 0, 0));
 
-    const rows = db.prepare(sql).all(...params);
+    const rows = await db.prepare(sql).all(...params);
     res.json(rows);
   } catch (err) {
     console.error("Error in /api/alumni:", err);
@@ -150,17 +231,30 @@ app.get("/api/alumni", (req, res) => {
 });
 
 // 4. Get single alumnus by roll number
-app.get("/api/alumni/:rollNumber", (req, res) => {
+app.get("/api/alumni/:rollNumber", async (req, res) => {
   try {
-    const alumnus = db.prepare(
-      "SELECT * FROM alumni WHERE UPPER(roll_number) = UPPER(?)"
+    if (!req.session.user) {
+      return res.status(401).json({ error: "Please sign in to continue." });
+    }
+    if (req.session.user.role !== "admin"
+      && (req.session.user.role !== "alumni"
+        || req.session.user.roll_number.toUpperCase() !== req.params.rollNumber.trim().toUpperCase())) {
+      return res.status(403).json({ error: "You can only access your own alumni account." });
+    }
+
+    const alumnus = await db.prepare(
+      `SELECT id, roll_number, first_name, middle_name, last_name, gender,
+              year_of_joining, year_of_passing, branch, email, phone, linkedin_url,
+              linkedin_status, "current_role", current_company, location, data_source,
+              last_enriched_at, updated_at
+       FROM alumni WHERE UPPER(roll_number) = UPPER(?)`
     ).get(req.params.rollNumber);
 
     if (!alumnus) {
       return res.status(404).json({ error: "Alumnus not found" });
     }
 
-    const history = db.prepare(
+    const history = await db.prepare(
       "SELECT * FROM alumni_career_history WHERE alumni_id = ? ORDER BY fetched_at DESC"
     ).all(alumnus.id);
 
@@ -171,10 +265,10 @@ app.get("/api/alumni/:rollNumber", (req, res) => {
 });
 
 // 5. Update alumnus profile
-app.put("/api/alumni/:rollNumber", (req, res) => {
+app.put("/api/alumni/:rollNumber", requireAlumnus, async (req, res) => {
   try {
     const roll = req.params.rollNumber.trim().toUpperCase();
-    const existing = db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
+    const existing = await db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
     if (!existing) {
       return res.status(404).json({ error: "Alumnus not found" });
     }
@@ -204,19 +298,19 @@ app.put("/api/alumni/:rollNumber", (req, res) => {
       newStatus = "pending";
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE alumni
       SET first_name = ?,
           last_name = ?,
           email = ?,
           phone = ?,
-          current_role = ?,
+          "current_role" = ?,
           current_company = ?,
           location = ?,
           linkedin_url = ?,
           linkedin_status = ?,
           data_source = 'self_edit',
-          updated_at = datetime('now')
+          updated_at = CURRENT_TIMESTAMP
       WHERE UPPER(roll_number) = ?
     `).run(
       newFirstName,
@@ -231,7 +325,13 @@ app.put("/api/alumni/:rollNumber", (req, res) => {
       roll
     );
 
-    const updated = db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
+    const updated = await db.prepare(
+      `SELECT id, roll_number, first_name, middle_name, last_name, gender,
+              year_of_joining, year_of_passing, branch, email, phone, linkedin_url,
+              linkedin_status, "current_role", current_company, location, data_source,
+              last_enriched_at, updated_at
+       FROM alumni WHERE UPPER(roll_number) = ?`
+    ).get(roll);
     res.json({ message: "Profile updated successfully", alumnus: updated });
   } catch (err) {
     console.error("Error updating profile:", err);
@@ -240,22 +340,32 @@ app.put("/api/alumni/:rollNumber", (req, res) => {
 });
 
 // 6. Authentication endpoint
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   try {
     const { role, identifier, password } = req.body;
 
     if (role === "admin") {
+      const username = (identifier || "").trim();
       const adminPass = (password || "").trim();
+      if (!username) {
+        return res.status(400).json({ success: false, error: "Admin username is required." });
+      }
       if (!adminPass) {
         return res.status(400).json({ success: false, error: "Admin password is required." });
       }
-      if (adminPass !== "admin" && adminPass !== "admin123") {
-        return res.status(401).json({ success: false, error: "Invalid admin password. (Default is 'admin' or 'admin123')" });
+      const admin = await db.prepare(
+        "SELECT username, password_hash FROM admin_users WHERE LOWER(username) = LOWER(?)"
+      ).get(username);
+      if (!admin || !(await verifyPassword(adminPass, admin.password_hash))) {
+        return res.status(401).json({ success: false, error: "Invalid admin password." });
       }
+      await regenerateSession(req);
+      req.session.user = { role: "admin", name: "System Administrator", username: admin.username };
+      await saveSession(req);
       return res.json({
         success: true,
         role: "admin",
-        user: { name: "System Administrator", role: "admin" },
+        user: req.session.user,
       });
     }
 
@@ -269,7 +379,7 @@ app.post("/api/auth/login", (req, res) => {
       return res.status(400).json({ success: false, error: "Password is required." });
     }
 
-    const alumnus = db.prepare(
+    const alumnus = await db.prepare(
       "SELECT * FROM alumni WHERE UPPER(roll_number) = ? OR UPPER(COALESCE(email, '')) = ?"
     ).get(term, term);
 
@@ -299,13 +409,20 @@ app.post("/api/auth/login", (req, res) => {
       });
     }
 
-    // Return alumnus details without password field
-    const { password: _, ...safeAlumnus } = alumnus;
+    await regenerateSession(req);
+    req.session.user = {
+      role: "alumni",
+      roll_number: alumnus.roll_number,
+      first_name: alumnus.first_name,
+      middle_name: alumnus.middle_name,
+      last_name: alumnus.last_name,
+    };
+    await saveSession(req);
 
     res.json({
       success: true,
       role: "alumni",
-      alumnus: safeAlumnus,
+      user: req.session.user,
     });
   } catch (err) {
     console.error("Error in /api/auth/login:", err);
@@ -313,8 +430,20 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
+app.get("/api/auth/session", requireAuth, (req, res) => {
+  res.json({ user: req.session.user });
+});
+
+app.post("/api/auth/logout", requireAuth, (req, res, next) => {
+  req.session.destroy((err) => {
+    if (err) return next(err);
+    res.clearCookie("almatracc.sid", { ...sessionCookie, maxAge: undefined });
+    res.json({ success: true });
+  });
+});
+
 // 7. Change password endpoint for alumni
-app.post("/api/alumni/:rollNumber/change-password", (req, res) => {
+app.post("/api/alumni/:rollNumber/change-password", requireAlumnus, async (req, res) => {
   try {
     const roll = req.params.rollNumber.trim().toUpperCase();
     const { currentPassword, newPassword } = req.body;
@@ -327,7 +456,7 @@ app.post("/api/alumni/:rollNumber/change-password", (req, res) => {
       return res.status(400).json({ success: false, error: "New password must be at least 4 characters long." });
     }
 
-    const alumnus = db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
+    const alumnus = await db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
     if (!alumnus) {
       return res.status(404).json({ success: false, error: "Alumni record not found." });
     }
@@ -348,11 +477,11 @@ app.post("/api/alumni/:rollNumber/change-password", (req, res) => {
       });
     }
 
-    // Update password in SQLite database
-    db.prepare(`
+    // Update password in PostgreSQL
+    await db.prepare(`
       UPDATE alumni
       SET password = ?,
-          updated_at = datetime('now')
+          updated_at = CURRENT_TIMESTAMP
       WHERE UPPER(roll_number) = ?
     `).run(newPassword.trim(), roll);
 
@@ -367,7 +496,7 @@ app.post("/api/alumni/:rollNumber/change-password", (req, res) => {
 });
 
 // 8. Admin endpoint: Reset alumni password back to their roll number
-app.post("/api/admin/reset-password", (req, res) => {
+app.post("/api/admin/reset-password", requireAdmin, async (req, res) => {
   try {
     const { rollNumber } = req.body;
     const roll = (rollNumber || "").trim().toUpperCase();
@@ -376,7 +505,7 @@ app.post("/api/admin/reset-password", (req, res) => {
       return res.status(400).json({ success: false, error: "Roll number is required." });
     }
 
-    const alumnus = db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
+    const alumnus = await db.prepare("SELECT * FROM alumni WHERE UPPER(roll_number) = ?").get(roll);
     if (!alumnus) {
       return res.status(404).json({
         success: false,
@@ -385,10 +514,10 @@ app.post("/api/admin/reset-password", (req, res) => {
     }
 
     // Setting password to NULL clears custom password, reverting to roll_number default
-    db.prepare(`
+    await db.prepare(`
       UPDATE alumni
       SET password = NULL,
-          updated_at = datetime('now')
+          updated_at = CURRENT_TIMESTAMP
       WHERE UPPER(roll_number) = ?
     `).run(roll);
 
@@ -407,13 +536,12 @@ app.post("/api/admin/reset-password", (req, res) => {
 });
 
 // 9. Admin endpoint: Run LinkedIn enrichment (SSE streaming output)
-app.post("/api/admin/enrich", (req, res) => {
+app.post("/api/admin/enrich", requireAdmin, (req, res) => {
   const { limit = 50, year } = req.body;
 
   // Build args for the Python script
   const scriptPath = path.join(__dirname, "enrich_linkedin.py");
-  const dbUrl = `sqlite:///${DB_PATH.replace(/\\/g, "/")}`;
-  const args = [scriptPath, dbUrl, "--limit", String(Number(limit) || 50)];
+  const args = [scriptPath, "--limit", String(Number(limit) || 50)];
 
   // SSE headers so the browser can stream log lines in real time
   res.setHeader("Content-Type", "text/event-stream");
@@ -485,6 +613,13 @@ app.post("/api/admin/enrich", (req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`AlmaTracc API running on http://localhost:${PORT}`);
-});
+initializeDatabase()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`AlmaTracc API running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Failed to initialize PostgreSQL:", err);
+    process.exitCode = 1;
+  });

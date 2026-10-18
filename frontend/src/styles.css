@@ -760,6 +760,14 @@ p {
   font-size: 12px;
 }
 
+.sidebar-bottom button.sidebar-link {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
 .sidebar-link svg {
   width: 15px;
   font-size: 14px;
@@ -1081,6 +1089,16 @@ p {
   border: 1px solid #CDDFCF;
   border-radius: 4px;
   color: #355A42;
+  font-size: 12px;
+}
+
+.error-message {
+  margin: 15px 0;
+  padding: 13px 15px;
+  background: #FEE2E2;
+  border: 1px solid #F87171;
+  border-radius: 4px;
+  color: #991B1B;
   font-size: 12px;
 }
 

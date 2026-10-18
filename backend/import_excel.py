@@ -1,14 +1,15 @@
-"""Import Alumni_linkedin.xlsx (one sheet per batch) into a database.
-Usage: python import_excel.py Alumni_linkedin.xlsx  [DATABASE_URL]
-Default DB = local SQLite file almatracc.db. For Postgres use e.g.
-postgresql+psycopg2://user:pass@localhost/almatracc
+"""Import alumni spreadsheet rows into the database configured by DATABASE_URL.
+
+Usage: python import_excel.py [xlsx_path] [DATABASE_URL]
 """
-import re, sys
+import os, re, sys
 import pandas as pd
 from sqlalchemy import create_engine, text
 
 xlsx = sys.argv[1] if len(sys.argv) > 1 else "Alumni linkedin.xlsx"
-db_url = sys.argv[2] if len(sys.argv) > 2 else "sqlite:///almatracc.db"
+db_url = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("DATABASE_URL")
+if not db_url:
+    raise SystemExit("Set DATABASE_URL or pass a database URL as the second argument.")
 engine = create_engine(db_url)
 
 DDL = """
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS alumni (
   year_of_joining INT, year_of_passing INT, branch TEXT,
   email TEXT, phone TEXT,
   linkedin_url TEXT, linkedin_status TEXT DEFAULT 'missing',
-  current_role TEXT, current_company TEXT, location TEXT,
+  "current_role" TEXT, current_company TEXT, location TEXT,
   data_source TEXT, last_enriched_at TIMESTAMP,
   password TEXT,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -79,7 +80,7 @@ out = out.drop_duplicates("roll_number", keep="first")
 with engine.begin() as c:
     for stmt in DDL.strip().split(";"):
         if stmt.strip(): c.execute(text(stmt))
-    c.execute(text("DELETE FROM alumni WHERE data_source='excel_import' AND current_role IS NULL"))
+    c.execute(text('DELETE FROM alumni WHERE data_source=\'excel_import\' AND "current_role" IS NULL'))
 out.to_sql("alumni", engine, if_exists="append", index=False)
 
 print(f"Imported {len(out)} alumni | with LinkedIn URL: {(out.linkedin_status=='pending').sum()} "

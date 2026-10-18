@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FaArrowLeft, FaGraduationCap, FaLock, FaInfoCircle } from "react-icons/fa";
+import { apiFetch } from "../api";
 
 export default function Login() {
   const [role, setRole] = useState("alumni");
@@ -17,34 +18,32 @@ export default function Login() {
 
     try {
       if (role === "admin") {
-        const res = await fetch("/api/auth/login", {
+        const res = await apiFetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ role: "admin", identifier, password }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          localStorage.setItem("almatracc_user", JSON.stringify({ role: "admin", name: "Administrator" }));
           navigate("/admin");
         } else {
           setError(data.error || "Login failed. Please check your credentials.");
         }
       } else {
-        const res = await fetch("/api/auth/login", {
+        const res = await apiFetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ role: "alumni", identifier, password }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          localStorage.setItem("almatracc_user", JSON.stringify(data.alumnus));
           navigate("/alumni");
         } else {
           setError(data.error || "Login failed. Default password is your roll number (e.g. 97MW01).");
         }
       }
     } catch {
-      setError("Unable to connect to authentication server. Please ensure the backend is running on http://localhost:4000.");
+      setError("Unable to connect to the authentication service. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -153,7 +152,7 @@ export default function Login() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder={role === "admin" ? "Enter admin password (e.g. admin)" : "Default password is your roll number"}
+              placeholder={role === "admin" ? "Enter admin password" : "Default password is your roll number"}
               required
             />
             {role === "alumni" && (
