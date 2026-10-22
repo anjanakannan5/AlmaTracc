@@ -7,6 +7,7 @@ Set env var ENRICH_API_KEY.
 import os, sys, json, time, argparse, requests
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 def log(msg):
     """Print and flush immediately so Node.js SSE stream gets each line in real time."""
@@ -14,10 +15,6 @@ def log(msg):
 
 def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-if not os.environ.get("ENRICH_API_KEY"):
-    log("ERROR: ENRICH_API_KEY environment variable is not set. Cannot enrich profiles.")
-    sys.exit(1)
 
 def clean(v):
     """Providers return True/False/None for fields hidden by your plan; keep real text only."""
@@ -36,9 +33,19 @@ ap.add_argument("db", nargs="?", default=os.environ.get("DATABASE_URL"))
 ap.add_argument("--limit", type=int, default=50)
 ap.add_argument("--refresh-days", type=int, default=180)
 args = ap.parse_args()
+if args.limit < 1 or args.limit > 500:
+    ap.error("--limit must be between 1 and 500.")
+if args.refresh_days < 0:
+    ap.error("--refresh-days cannot be negative.")
 if not args.db:
     ap.error("Set DATABASE_URL or pass a database URL.")
-engine = create_engine(args.db)
+if not os.environ.get("ENRICH_API_KEY"):
+    log("ERROR: ENRICH_API_KEY environment variable is not set. Cannot enrich profiles.")
+    sys.exit(1)
+db_url = make_url(args.db)
+if db_url.drivername in ("postgres", "postgresql"):
+    db_url = db_url.set(drivername="postgresql+psycopg2")
+engine = create_engine(db_url)
 
 # ---- Provider adapter: the ONLY part you change when switching vendors ----------
 def fetch_profile(linkedin_url: str) -> dict | None:
@@ -62,16 +69,24 @@ def fetch_profile(linkedin_url: str) -> dict | None:
 
 cutoff = now() - timedelta(days=args.refresh_days)
 enrich_year = os.environ.get("ENRICH_YEAR", "").strip()
+try:
+    year = int(enrich_year) if enrich_year else None
+except ValueError:
+    ap.error("ENRICH_YEAR must be a valid year.")
+if year is not None and not 1900 <= year <= 2200:
+    ap.error("ENRICH_YEAR must be between 1900 and 2200.")
 
 with engine.begin() as c:
-    year_filter = " AND year_of_passing = :yr" if enrich_year else ""
+    year_filter = " AND year_of_passing = :yr" if year is not None else ""
     params = {"cutoff": cutoff, "n": args.limit}
-    if enrich_year:
-        params["yr"] = int(enrich_year)
+    if year is not None:
+        params["yr"] = year
     todo = c.execute(text(f"""
         SELECT id, roll_number, linkedin_url FROM alumni
-        WHERE linkedin_url IS NOT NULL
-          AND linkedin_status IN ('pending','failed','enriched')
+        WHERE linkedin_url IS NOT NULL AND TRIM(linkedin_url) <> ''
+          AND (linkedin_status IN ('pending','failed','enriched','missing')
+               OR linkedin_status IS NULL)
+          AND COALESCE(data_source, '') NOT IN ('self_edit','event_checkin')
           AND (last_enriched_at IS NULL OR last_enriched_at < :cutoff)
           {year_filter}
         ORDER BY last_enriched_at IS NOT NULL, last_enriched_at
@@ -91,7 +106,9 @@ for alumni_id, roll_number, url in todo:
         log(f"  [ERR] {roll_number}: {e}")
         fail += 1
         with engine.begin() as c:
-            c.execute(text("UPDATE alumni SET linkedin_status='failed' WHERE id=:i"), {"i": alumni_id})
+            c.execute(text("""UPDATE alumni SET linkedin_status='failed'
+                WHERE id=:i AND COALESCE(data_source,'') NOT IN ('self_edit','event_checkin')"""),
+                {"i": alumni_id})
         time.sleep(2)
         continue
 
@@ -99,27 +116,34 @@ for alumni_id, roll_number, url in todo:
         if not p:
             log(f"  [NOT FOUND] {roll_number}: no matching profile returned")
             fail += 1
-            c.execute(text("UPDATE alumni SET linkedin_status='failed', last_enriched_at=:t WHERE id=:i"),
+            c.execute(text("""UPDATE alumni SET linkedin_status='failed', last_enriched_at=:t
+                WHERE id=:i AND COALESCE(data_source,'') NOT IN ('self_edit','event_checkin')"""),
                       {"t": now(), "i": alumni_id})
             continue
         if not any((p["role"], p["company"], p["location"])):
             log(f"  [NO DATA] {roll_number}: provider returned no role, company, or location")
             fail += 1
-            c.execute(text("UPDATE alumni SET linkedin_status='failed', last_enriched_at=:t WHERE id=:i"),
+            c.execute(text("""UPDATE alumni SET linkedin_status='failed', last_enriched_at=:t
+                WHERE id=:i AND COALESCE(data_source,'') NOT IN ('self_edit','event_checkin')"""),
                       {"t": now(), "i": alumni_id})
+            continue
+        updated = c.execute(text("""UPDATE alumni SET
+              "current_role"=COALESCE(:r, "current_role"),
+              current_company=COALESCE(:c, current_company),
+              location=COALESCE(:l, location),
+              linkedin_status='enriched', last_enriched_at=:t, updated_at=:t,
+              data_source='linkedin_api'
+            WHERE id=:i AND COALESCE(data_source,'') NOT IN ('self_edit','event_checkin')"""),
+            {"r": p["role"], "c": p["company"], "l": p["location"],
+             "t": now(), "i": alumni_id})
+        if not updated.rowcount:
+            log(f"  [SKIPPED] {roll_number}: profile was edited during enrichment")
             continue
         c.execute(text("""INSERT INTO alumni_career_history
             (alumni_id, role, company, location, source, raw_response)
             VALUES (:i,:r,:c,:l,'linkedin_api',:raw)"""),
             {"i": alumni_id, "r": p["role"], "c": p["company"], "l": p["location"],
              "raw": json.dumps(p["raw"])})
-        c.execute(text("""UPDATE alumni SET
-              "current_role"=:r, current_company=:c, location=:l,
-              linkedin_status='enriched', last_enriched_at=:t, updated_at=:t,
-              data_source='linkedin_api'
-            WHERE id=:i AND COALESCE(data_source,'') NOT IN ('self_edit','event_checkin')"""),
-            {"r": p["role"], "c": p["company"], "l": p["location"],
-             "t": now(), "i": alumni_id})
         missing = []
         if not p["role"]:
             missing.append("role")

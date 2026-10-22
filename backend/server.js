@@ -536,12 +536,29 @@ app.post("/api/admin/reset-password", requireAdmin, async (req, res) => {
 });
 
 // 9. Admin endpoint: Run LinkedIn enrichment (SSE streaming output)
+let enrichmentProcess = null;
+
 app.post("/api/admin/enrich", requireAdmin, (req, res) => {
-  const { limit = 50, year } = req.body;
+  const requestedLimit = req.body?.limit ?? 50;
+  const limit = Number(requestedLimit);
+  const requestedYear = req.body?.year;
+  const year = requestedYear === undefined || requestedYear === null || requestedYear === ""
+    ? null
+    : Number(requestedYear);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    return res.status(400).json({ error: "limit must be an integer between 1 and 500." });
+  }
+  if (year !== null && (!Number.isInteger(year) || year < 1900 || year > 2200)) {
+    return res.status(400).json({ error: "year must be an integer between 1900 and 2200." });
+  }
+  if (enrichmentProcess && enrichmentProcess.exitCode === null) {
+    return res.status(409).json({ error: "An enrichment run is already in progress." });
+  }
 
   // Build args for the Python script
   const scriptPath = path.join(__dirname, "enrich_linkedin.py");
-  const args = [scriptPath, "--limit", String(Number(limit) || 50)];
+  const args = [scriptPath, "--limit", String(limit)];
 
   // SSE headers so the browser can stream log lines in real time
   res.setHeader("Content-Type", "text/event-stream");
@@ -555,23 +572,17 @@ app.post("/api/admin/enrich", requireAdmin, (req, res) => {
     }
   };
 
-  send("info", `🚀 Starting enrichment — limit: ${limit}${year ? `, batch: ${year}` : ""}`);
+  send("info", `🚀 Starting enrichment — limit: ${limit}${year !== null ? `, batch: ${year}` : ""}`);
 
-  // If a specific year/batch is requested, we filter inside the script by
-  // wrapping it: select only alumni for that year then call enrichment.
-  // For simplicity we pass year as an env var the script can read, OR we just
-  // pre-filter the DB and store the IDs in a temp table. Easiest approach:
-  // patch the DB's linkedin_status for non-matching rows temporarily is risky,
-  // so instead we expose year as ENRICH_YEAR env and the script reads it.
-  // (We add that reading below via a wrapper approach)
   const env = {
     ...process.env,
-    ENRICH_YEAR: year ? String(year) : "",
+    ENRICH_YEAR: year === null ? "" : String(year),
     PYTHONUNBUFFERED: "1",
     PYTHONUTF8: "1",
   };
 
-  const py = spawn("python", ["-u", ...args], { env, cwd: __dirname });
+  const py = spawn(process.env.PYTHON_EXECUTABLE || "python", ["-u", ...args], { env, cwd: __dirname });
+  enrichmentProcess = py;
 
   let stdoutBuffer = "";
   let stderrBuffer = "";
@@ -593,6 +604,7 @@ app.post("/api/admin/enrich", requireAdmin, (req, res) => {
   });
 
   py.on("close", (code, signal) => {
+    enrichmentProcess = null;
     if (stdoutBuffer) send("log", stdoutBuffer);
     if (stderrBuffer) send("err", stderrBuffer);
 

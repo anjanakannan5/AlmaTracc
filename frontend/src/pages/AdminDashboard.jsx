@@ -64,9 +64,30 @@ export default function AdminDashboard() {
         signal: controller.signal,
       });
 
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({}));
+        throw new Error(result.error || `Enrichment request failed (${res.status}).`);
+      }
+      if (!res.body) {
+        throw new Error("The server did not provide an enrichment log stream.");
+      }
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      const appendLine = (line) => {
+        if (!line.startsWith("data: ")) return;
+        try {
+          const msg = JSON.parse(line.slice(6));
+          setEnrichLogs((prev) => [...prev, msg]);
+          setTimeout(() => enrichLogEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+        } catch (err) {
+          setEnrichLogs((prev) => [...prev, {
+            type: "err",
+            text: `Invalid response from enrichment stream: ${err.message}`,
+          }]);
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -74,16 +95,10 @@ export default function AdminDashboard() {
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop(); // keep incomplete last chunk
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const msg = JSON.parse(line.slice(6));
-              setEnrichLogs((prev) => [...prev, msg]);
-              setTimeout(() => enrichLogEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-            } catch { /* ignore malformed */ }
-          }
-        }
+        lines.forEach(appendLine);
       }
+      buffer += decoder.decode();
+      if (buffer) appendLine(buffer);
     } catch (err) {
       if (err.name !== "AbortError") {
         setEnrichLogs((prev) => [...prev, { type: "err", text: "Connection error: " + err.message }]);
@@ -417,7 +432,7 @@ export default function AdminDashboard() {
 
             <small className="field-hint" style={{ marginBottom: "14px", display: "block" }}>
               Requires <code>ENRICH_API_KEY</code> env var set on the backend server.
-              Only processes alumni with a LinkedIn URL whose status is <em>pending</em>, <em>failed</em>, or <em>enriched</em> (older than 180 days).
+              Only processes alumni with a LinkedIn URL and a <em>missing</em>, <em>pending</em>, <em>failed</em>, or 180-day-old <em>enriched</em> status. Self-edited profiles are left unchanged.
             </small>
 
             {/* Live log output */}
