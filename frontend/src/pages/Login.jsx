@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { FaArrowLeft, FaGraduationCap, FaLock, FaInfoCircle } from "react-icons/fa";
+import { FaArrowLeft, FaLock, FaInfoCircle } from "react-icons/fa";
 import { apiFetch } from "../api";
+import BrandLogo from "../components/BrandLogo";
 
 export default function Login() {
   const [role, setRole] = useState("alumni");
@@ -53,11 +54,7 @@ export default function Login() {
     <main className="auth-page">
       <div className="auth-brand">
         <Link to="/" className="brand">
-          <span className="brand-mark"><FaGraduationCap /></span>
-          <span className="brand-copy">
-            <strong>AlmaTracc</strong>
-            <small>AMCS Alumni Network</small>
-          </span>
+          <BrandLogo />
         </Link>
         <Link to="/" className="back-link">
           <FaArrowLeft /> Back to home

@@ -1,18 +1,12 @@
 
 import { Link } from "react-router-dom";
-import { FaGraduationCap } from "react-icons/fa";
+import BrandLogo from "./BrandLogo";
 
 export default function Navbar({ showLogin = true }) {
   return (
     <header className="navbar">
       <Link to="/" className="brand">
-        <span className="brand-mark">
-          <FaGraduationCap />
-        </span>
-        <span className="brand-copy">
-          <strong>AlmaTracc</strong>
-          <small>AMCS Alumni Network</small>
-        </span>
+        <BrandLogo />
       </Link>
 
       <nav className="nav-links">

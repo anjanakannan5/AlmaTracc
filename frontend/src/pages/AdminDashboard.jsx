@@ -20,6 +20,7 @@ import {
 import { apiFetch } from "../api";
 import LogoutButton from "../components/LogoutButton";
 import NewGraduateIntake from "../components/NewGraduateIntake";
+import BrandLogo from "../components/BrandLogo";
 
 export default function AdminDashboard() {
   const [alumni, setAlumni] = useState([]);
@@ -278,13 +279,7 @@ export default function AdminDashboard() {
     <div className="dashboard">
       <aside className="sidebar">
         <Link to="/" className="brand sidebar-brand">
-          <span className="brand-mark">
-            <FaGraduationCap />
-          </span>
-          <span className="brand-copy">
-            <strong>AlmaTracc</strong>
-            <small>AMCS Alumni Network</small>
-          </span>
+          <BrandLogo />
         </Link>
 
         <span className="sidebar-label">ADMINISTRATION</span>

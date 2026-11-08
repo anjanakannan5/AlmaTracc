@@ -1,6 +1,7 @@
 
 import { Link, useLocation } from "react-router-dom";
-import { FaArrowLeft, FaGraduationCap } from "react-icons/fa";
+import { FaArrowLeft } from "react-icons/fa";
+import BrandLogo from "../components/BrandLogo";
 
 export default function AccountHelp() {
   const { pathname } = useLocation();
@@ -10,11 +11,7 @@ export default function AccountHelp() {
     <main className="auth-page">
       <div className="auth-brand">
         <Link to="/" className="brand">
-          <span className="brand-mark"><FaGraduationCap /></span>
-          <span className="brand-copy">
-            <strong>AlmaTracc</strong>
-            <small>AMCS Alumni Network</small>
-          </span>
+          <BrandLogo />
         </Link>
         <Link to="/login" className="back-link">
           <FaArrowLeft /> Back to sign in

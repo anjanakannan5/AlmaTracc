@@ -15,6 +15,7 @@ import {
 } from "react-icons/fa";
 import { apiFetch } from "../api";
 import LogoutButton from "../components/LogoutButton";
+import BrandLogo from "../components/BrandLogo";
 
 const defaultProfile = {
   firstName: "",
@@ -171,11 +172,7 @@ export default function AlumniDashboard({ user }) {
     <div className="dashboard">
       <aside className="sidebar">
         <Link to="/" className="brand sidebar-brand">
-          <span className="brand-mark"><FaGraduationCap /></span>
-          <span className="brand-copy">
-            <strong>AlmaTracc</strong>
-            <small>AMCS Alumni Network</small>
-          </span>
+          <BrandLogo />
         </Link>
 
         <span className="sidebar-label">WORKSPACE</span>
