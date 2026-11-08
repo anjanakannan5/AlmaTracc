@@ -74,6 +74,21 @@ async function initializeDatabase() {
       fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       raw_response TEXT
     );
+    CREATE TABLE IF NOT EXISTS new_graduate_intake (
+      id SERIAL PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      roll_number TEXT UNIQUE NOT NULL,
+      year_of_passing INTEGER NOT NULL,
+      branch TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      linkedin_url TEXT,
+      imported_alumni_id INTEGER REFERENCES alumni(id),
+      imported_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_new_graduate_intake_year
+      ON new_graduate_intake (year_of_passing);
     ALTER TABLE alumni ADD COLUMN IF NOT EXISTS password TEXT;
     CREATE TABLE IF NOT EXISTS admin_users (
       id SERIAL PRIMARY KEY,

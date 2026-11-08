@@ -93,6 +93,20 @@ npm run migrate:sqlite -- "C:\path\to\source.db"
 The hosted PostgreSQL tables must be empty. Migration preserves record IDs and
 updates PostgreSQL sequences so new rows can be inserted afterward.
 
+### Adding a newly graduated batch
+
+Administrators can use **New Graduates** in the admin dashboard to add already
+graduated students to an intake list, either one record at a time or by
+uploading a CSV/XLSX file (maximum 5 MB). The template download shows the
+expected column headings: Name, Roll Number, Graduation Year, Branch, Email,
+Phone, and LinkedIn URL. Name, roll number, graduation year, and branch are
+required; email and phone are optional.
+
+Review the intake list and select records to import into the main alumni
+directory. A roll number already present in the alumni directory is flagged
+and is not overwritten. Imported intake records remain visible as an audit
+trail. The intake table is created automatically when the backend starts.
+
 ### Option 1: Run Both (Recommended)
 
 From the project root:

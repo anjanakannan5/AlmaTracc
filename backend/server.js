@@ -8,6 +8,7 @@ const { spawn } = require("child_process");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const { db, pool, initializeDatabase, verifyPassword } = require("./database");
+const newGraduatesRouter = require("./routes/newGraduates");
 
 const app = express();
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
@@ -75,6 +76,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: sessionCookie,
 }));
+app.use("/api/admin/new-graduates", newGraduatesRouter);
 
 function requireAuth(req, res, next) {
   if (!req.session.user) {

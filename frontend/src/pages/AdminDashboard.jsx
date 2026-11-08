@@ -19,6 +19,7 @@ import {
 } from "react-icons/fa";
 import { apiFetch } from "../api";
 import LogoutButton from "../components/LogoutButton";
+import NewGraduateIntake from "../components/NewGraduateIntake";
 
 export default function AdminDashboard() {
   const [alumni, setAlumni] = useState([]);
@@ -294,6 +295,9 @@ export default function AdminDashboard() {
           <a href="#directory" className="sidebar-link active">
             <FaUsers /> Alumni Directory
           </a>
+          <a href="#new-graduates" className="sidebar-link">
+            <FaGraduationCap /> New Graduates
+          </a>
           <a href="#enrich-linkedin" className="sidebar-link">
             <FaLinkedin /> Enrich LinkedIn
           </a>
@@ -374,6 +378,8 @@ export default function AdminDashboard() {
             <small>Self-updated profiles</small>
           </article>
         </section>
+
+        <NewGraduateIntake />
 
         {/* ── LinkedIn Enrichment Panel ── */}
         <section className="section-block" id="enrich-linkedin" style={{ marginBottom: "28px" }}>
